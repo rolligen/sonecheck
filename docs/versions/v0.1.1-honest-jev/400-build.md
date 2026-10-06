@@ -41,7 +41,7 @@
 
 - **失败重试**：仅 `429` / `529` 重试 1 次（退避 150ms，`ADR-007` 定案）；其余状态码不重试
 - **并发**：在飞请求 ≤ 4（semaphore，`core/riskEngine`）；重复触发命令仍复用进行中 Promise（`v0.1.0` 语义）
-- **超时**：单请求 400ms（`AbortController`）；超时 → `ERR-02`
+- **超时**：单请求 500ms（`AbortController`，`REQUEST_TIMEOUT_MS`）；超时 → `ERR-02`（不重试）
 - **配额 / 鉴权**：`401` / `429` / `529` → `ERR-04`（`429`/`529` 先重试）
 - **schema 不合规**：该块 `failure: 'ERR-05'` 丢弃，**其余块不受影响**
 - **大数据量**：payload 上限与 hunk 切分沿用 `v0.1.0`（`300-design` §4.3）
@@ -72,7 +72,7 @@
 | Step | 名称 | 执行态 | 环节 | guard | 交付物 / 跳过理由 |
 |---|---|---|---|---|---|
 | S0 | Scaffold & Clean | 执行 | 开发 | — | `constants.ts` 增量（超时 / 退避 / 并发 / 默认 endpoint）；`tools/jev-mock/` 工程骨架（Worker 模块 + `wrangler.toml` + `.vscodeignore` 增列 `tools/`）；`package.json` 增 `test:integration` 占位与 `wrangler` devDependency。**显式登记：O2 埋点顺延，本版无运行期日志** |
-| S1 | Contract & ADR | 执行 | 设计 | — | ADR-006 / ADR-007 核对回填（已落盘）；`03` 超时 / 重试定案与 `ERR-08` 语义回写；`API-03` 公开签名冻结（`setKey` / `getKey` / `clearKey`） |
+| S1 | Contract & ADR | 执行 | 设计 | — | ADR-006 / ADR-007 核对回填（已落盘）；`03` 超时 / 重试定案与 `ERR-08` 语义回写；`API-03` 公开签名冻结（`hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`） |
 | S2 | Core & Prototype | 执行 | 开发 | GUARD-03,04,06 | 真实 `jevClient`（wire 组装 / 超时 / 重试 / 归一 / `failure` 信号）+ `tools/jev-mock` 五类故障注入 + T2 契约测试骨架（五类故障全绿） |
 | S3 | Standard Finalization | 执行 | 开发 | GUARD-03 | 并发上限 4 实测复核（仿真端点注入延迟场景）；`sonecheck.endpoint` 回写 `03` §3；翻牌第一批（`ERR-01`~`ERR-05` / `API-01` 真实链路 / `INV-04`，以 T2 证据为准） |
 | S4 | Ingress Migration | 执行 | 开发 | GUARD-01,02,06 | `secrets.ts` 落地；`configSource` / `config` 增 `endpoint`；`riskEngine` 并发编排与 `failure` 剔除；`setApiKey` 命令注册 |
@@ -114,10 +114,12 @@
 - **函数签名与伪代码**：
 
 ```text
-async function getKey(): Promise<string | null>          // SecretStorage 读取；未配置返回 null
-async function setKey(value: string): Promise<void>      // 写入；空串走 clearKey（INV-03：不落盘明文）
-async function clearKey(): Promise<void>
+async function hasApiKey(): Promise<boolean>            // 可读性查询：判定前置校验（未配置 → 宽限跳过，ADR-006）
+async function getApiKey(): Promise<string | null>      // SecretStorage 读取；未配置返回 null
+async function setApiKey(value: string): Promise<void>  // 写入；空串走 clearApiKey（INV-03：不落盘明文）
+async function clearApiKey(): Promise<void>             // 清除（ERR-11 二次确认后调用）
 // 不变量：Key 明文只存在于本模块与 SecretStorage 之间；v0.1.2+ 不得变更签名
+// 签名与 02 §2 模块表逐字一致（该表为上游真值来源）
 ```
 
 - **异常与边界**：SecretStorage 底层异常（如 OS 密钥库锁）→ 向上抛系统级异常，`ui/commands` 提示一次后终止——**不得**归入 `ERR-08`（那是「未配置」，不是「读不到」）
@@ -126,30 +128,31 @@ async function clearKey(): Promise<void>
 
 | 函数 | 场景 | 预期（given-when-then） |
 |------|------|------------------------|
-| `getKey` | 未配置 | given 空 SecretStorage → when `getKey` → then 返回 `null`，不抛错 |
-| `setKey` | 写入后读取 | given 合法串 → when set 后 get → then 原值返回且存储介质非明文文件（SecretStorage 语义） |
+| `hasApiKey` | 未配置 | given 空 SecretStorage → when `hasApiKey` → then 返回 `false`，不抛错 |
+| `getApiKey` | 未配置 | given 空 SecretStorage → when `getApiKey` → then 返回 `null`，不抛错 |
+| `setApiKey` | 写入后读取 | given 合法串 → when set 后 get → then 原值返回且存储介质非明文文件（SecretStorage 语义） |
 
 ### 3.3 S2 Core & Prototype
 
 - **目标**：真实客户端与仿真端点在同一契约下互为镜像，T2 契约测试建立。
 - **步骤拆解**：
-  1. `src/infra/jevClient.ts` 重写：`createJevClient(deps)` 工厂（`deps = { endpoint, getKey, fetchImpl? }`，`fetchImpl` 供 T1 注入）；wire 组装（两个 question 的 `instructions` 用**结构化写法**并以反引号引用 `state` 字段，`risk_score` 附 `criteria: {true, false}`——见 `300-design` §4.1）、`AbortController` 超时、重试、五类归一、`failure` 信号（`300-design` §4.1–4.4）
+  1. `src/infra/jevClient.ts` 重写：`createJevClient(deps)` 工厂（`deps = { endpoint, getApiKey, fetchImpl? }`，`fetchImpl` 供 T1 注入）；wire 组装（两个 question 的 `instructions` 用**结构化写法**并以反引号引用 `state` 字段，`risk_score` 附 `criteria: {true, false}`——见 `300-design` §4.1）、`AbortController` 超时、重试、五类归一、`failure` 信号（`300-design` §4.1–4.4）
   2. `tools/jev-mock/worker.mjs` 完整实现：合规响应 + `usage` + `model` 字段；五类故障注入
   3. `test/integration/jevContract.test.ts`：对仿真端点跑五类故障 + 超时 + 重试计数 + Key 泄漏断言（起服方式：vitest `beforeAll` 拉起 `wrangler dev --port <随机>` 或 `local.mjs` 子进程，`afterAll` 回收）
   4. `v0.1.0` 的 `scoreHunk` / `createMockJevClient` 移入 `test/fixtures/`（T1 打分用例改引 fixture，基线不降）
 - **函数签名与伪代码**：
 
 ```text
-interface JevClientDeps { endpoint: string; getKey: () => Promise<string | null>; fetchImpl?: typeof fetch }
+interface JevClientDeps { endpoint: string; getApiKey: () => Promise<string | null>; fetchImpl?: typeof fetch }
 function createJevClient(deps: JevClientDeps): IJevClient
 
 async function decide(payload: HunkPayload): Promise<DecisionResult>
-// 组装 JevRequest → fetch(AbortController 400ms) → 429/529 重试 1 次(150ms) → 解析/校验
+// 组装 JevRequest → fetch(AbortController 500ms) → 429/529 重试 1 次(150ms) → 解析/校验
 // 任何失败路径：resolve { score: 0, decision: 'PASS', reasonCode: 'STYLE_ONLY', failure: 'ERR-0x' }
 ```
 
 - **输入输出与前置条件**：输入 `HunkPayload`（`INV-02` 已满足）；输出 `DecisionResult`（含 `failure` 与否）；后置：同输入同输出（幂等，对无故障路径）
-- **异常与边界**：`getKey()` 返回 `null` 不应到达 `decide`（宽限短路在更上游）；若到达，返回 `failure: 'ERR-08'` 兜底而非抛错
+- **异常与边界**：`getApiKey()` 返回 `null` 不应到达 `decide`（宽限短路在更上游，由 `hasApiKey` 判定）；若到达，返回 `failure: 'ERR-08'` 兜底而非抛错
 
 #### 关键行为契约
 
@@ -157,7 +160,7 @@ async function decide(payload: HunkPayload): Promise<DecisionResult>
 |------|------|------------------------|
 | `decide` | 正常响应 | given 仿真端点无故障 → when 调用 → then `score = answers.risk_score.noul`、`reasonCode = choice`、无 `failure` |
 | `decide` | 连接失败 | given `fault: disconnect` → when 调用 → then resolve `failure: 'ERR-01'`，不 reject |
-| `decide` | 超时 | given `fault: timeout`（>400ms）→ when 调用 → then `failure: 'ERR-02'` 且耗时 < 600ms |
+| `decide` | 超时 | given `fault: timeout`（挂起 3s）→ when 调用 → then `failure: 'ERR-02'` 且耗时 ≈500ms（断言 < 700ms） |
 | `decide` | 429 重试 | given `fault: rate429` → when 调用 → then 上游收到**恰好 2 次**请求（1 次 + 1 重试），最终 `failure: 'ERR-04'` |
 | `decide` | schema 不合规 | given `fault: badschema` → when 调用 → then `failure: 'ERR-05'`，不抛错 |
 | `decide` | Key 泄漏 | given 任意路径 → when 检查请求体与结果 → then 不含 Key 明文 |

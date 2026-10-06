@@ -22,16 +22,16 @@
 
 | 层 | 文件 | 本版变更 | 禁止 |
 |---|---|---|---|
-| 跨层常量 | `src/constants.ts` | 增量：`REQUEST_TIMEOUT_MS=400`、`RETRY_MAX_ATTEMPTS=1`、`RETRY_BACKOFF_MS=150`、`MAX_CONCURRENCY=4`、`JEV_ENDPOINT_DEFAULT` | 纯数据模块，不 import 任何层 |
+| 跨层常量 | `src/constants.ts` | 增量：`REQUEST_TIMEOUT_MS=500`、`RETRY_MAX_ATTEMPTS=1`、`RETRY_BACKOFF_MS=150`、`MAX_CONCURRENCY=4`、`JEV_ENDPOINT_DEFAULT` | 纯数据模块，不 import 任何层 |
 | UI | `src/ui/commands.ts` | 增 `sonecheck.setApiKey` 注册；`inspectDiff` 增未配 Key 宽限短路（`ADR-006`） | 直连 SecretStorage / HTTP |
 | UI | `src/ui/status.ts` | 增「未配置 Key」瞬时态与一次性引导通知（带按钮直达命令） | — |
 | Core | `src/core/riskEngine.ts` | 判定调用改为**并发上限 4** 的批量编排（semaphore）；`failure` 块剔除出清单并聚合上报 | 引用 `vscode` 做 IO |
 | Core | `src/core/config.ts` | `endpoint` 归一（空 / 非 https → 回退默认） | — |
 | Infra | `src/infra/jevClient.ts` | **重写**：真实 `fetch` 客户端（wire 组装、超时、重试、错误归一）；`createMockJevClient` 工厂保留（测试注入用） | 依赖 `vscode` |
-| Infra | `src/infra/secrets.ts` | **新建**：SecretStorage 读写唯一出口（`getKey` / `setKey` / `clearKey`，布尔可读性查询） | Key 明文出现在其他任何文件 |
+| Infra | `src/infra/secrets.ts` | **新建**：SecretStorage 读写唯一出口（`hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`，签名以 `02` §2 模块表为准） | Key 明文出现在其他任何文件 |
 | Infra | `src/infra/configSource.ts` | 增读 `sonecheck.endpoint` | 承载业务判断 |
 
-- **Facade**：两个 Facade 增量 re-export（`secrets` 的 `getKey` / `setKey` / `clearKey`；`jevClient` 的错误码类型）。
+- **Facade**：两个 Facade 增量 re-export（`secrets` 的 `hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`；`jevClient` 的错误码类型）。
 - **本版不建的模块**：`src/infra/logger.ts` 仍不建（O2 埋点顺延，见 `200-spec` §1.1）。
 
 ### 2.1 防腐设计
@@ -81,10 +81,10 @@
 
 ### 4.2 超时与重试（`ADR-007` 定案值）
 
-- 超时：`AbortController` + `REQUEST_TIMEOUT_MS = 400`；超时 → `ERR-02`。
+- 超时：`AbortController` + `REQUEST_TIMEOUT_MS = 500`；超时 → `ERR-02`（**不重试**）。
 - 重试：仅 `429` / `529` 重试 `RETRY_MAX_ATTEMPTS = 1` 次，退避 `RETRY_BACKOFF_MS = 150`；其余非 2xx 不重试。
 - 归一：连接层失败 → `ERR-01`；本地计时超时 → `ERR-02`；非 2xx（非 401/422/429/529）→ `ERR-03`；`401` / `429` / `529` → `ERR-04`；`422` 或 schema 不合规 → `ERR-05`。
-- 单请求链上界 ≈ 950ms（400×2 + 150）< `00` §3 端到端 p95 ≤ 1s。
+- 限流路径实际上界 ≈850ms（实测限流响应 ~200ms + 退避 150ms + 重试 ≤500ms），< `00` §3 端到端 p95 ≤ 1s；超时路径不重试，故不与超时上界叠加。
 
 ### 4.3 并发模型（`02` §4 落地）
 
@@ -99,8 +99,8 @@
 
 ### 4.5 Key 生命周期（`API-03` + `ADR-006`）
 
-- 写入：`showInputBox({ password: true })` → `infra/secrets.setKey`；取消 → `ERR-10`（无副作用）；空串 → 二次确认 → 清除（`ERR-11`）。
-- 读取：每次检查前经 `infra/secrets` 查询可读性；未配置 → 宽限短路（首次引导带按钮，后续状态栏瞬时提示）。
+- 写入：`showInputBox({ password: true })` → `infra/secrets.setApiKey`；取消 → `ERR-10`（无副作用）；空串 → 二次确认 → `clearApiKey`（`ERR-11`）。
+- 读取：每次检查前经 `infra/secrets.hasApiKey` 查询可读性；未配置 → 宽限短路（首次引导带按钮，后续状态栏瞬时提示）。
 - 明文纪律：输入框 `password: true`；任何提示 / 日志 / 出站内容不回显（`INV-03`，守卫 `GUARD-06`）。
 
 ### 4.6 契约仿真端点（`tools/jev-mock/`，`ADR-007`）
@@ -149,7 +149,7 @@
 | Key 生命周期 | T1 单元 | 取消无副作用 / 空串二次确认 / `secrets` 外无明文（`GUARD-06` 同源断言） | 纯 Node（SecretStorage stub） |
 | **wire 组装与解析** | T1 单元 | `serializePayload` 增量断言（`state`/`questions` 外层）；响应 schema 三类不合规 → `ERR-05` | 纯 Node |
 | **五类故障降级** | **T2 契约**（首次引入） | 仿真端点注入 `disconnect`/`timeout`/`http500`/`rate429`/`badschema` → 各归 `ERR-01`~`ERR-05`、放行、一次性聚合 | 真实 HTTP（`wrangler dev` 仿真端点） |
-| **超时与重试** | T2 契约 | 400ms 超时触发；`429` 恰好重试 1 次（退避 150ms）；重试计数断言 | 同上 |
+| **超时与重试** | T2 契约 | 500ms 超时触发（断言耗时 ≈500ms）；`429` 恰好重试 1 次（退避 150ms）；重试计数断言 | 同上 |
 | **Key 泄漏** | T2 契约 | 出站请求体与错误路径不含 Key 明文 | 同上 |
 | 真机八项 | T3 端到端 | `200-spec` §2 逐项（对仿真端点） | Extension Host（人工验证） |
 
