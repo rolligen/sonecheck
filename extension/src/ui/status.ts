@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 
 /**
- * Status-bar states of one inspection (`04` §2 五态中的四种：空 / 加载 / 成功 / 错误）。
+ * Status-bar states of one inspection (`04` §2 五态中的四种：空 / 加载 / 成功 / 错误，
+ * 外加 `v0.1.1` 的宽限态「未配置 Key」）。
  *
  * `idle` means "no indication": the item is hidden, which is how the extension
- * achieves zero disturbance (`US-03`).
+ * achieves zero disturbance (`US-03`). `no-key` is deliberately **not** an error
+ * state: a missing key skips the inspection (`ADR-006`), and colouring it as a
+ * warning would contradict "nothing is broken".
  */
-export type StatusState = 'idle' | 'running' | 'clear' | 'empty' | 'warning';
+export type StatusState = 'idle' | 'running' | 'clear' | 'empty' | 'warning' | 'no-key';
 
 /** One-shot notifications and the transient status item (`04` §2). */
 export interface StatusReporter {
@@ -63,6 +66,10 @@ export function createStatusReporter(): StatusReporter {
           break;
         case 'warning':
           showTransient('SoneCheck: 已跳过', new vscode.ThemeColor('statusBarItem.warningBackground'));
+          break;
+        case 'no-key':
+          // 宽限态：无错误色、无 spinner——只是「这次没判」（ADR-006）
+          showTransient('SoneCheck: 未配置 Key');
           break;
         case 'idle':
         default:
