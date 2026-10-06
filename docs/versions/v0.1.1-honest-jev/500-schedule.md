@@ -43,4 +43,10 @@
 > 日常流水进 worklog（时间轴），本节只记 Step 轴的偏差 / 发现 / 失误 / 遗留。
 > 条目随 Step 完成动态追加，**不编号**（Step 可能跳过，编号会失真）。
 
-无
+#### S0 Scaffold & Clean（e246195）
+
+- **概要**：为真实客户端备好常量、仿真端点与依赖面——`constants.ts` 增 5 个判定参数常量，`tools/jev-mock/` 落地 `03` §2.1 的可执行镜像（平台无关 handler + Node 入口 + Worker 入口 + wrangler 配置），打包面显式排除 `tools/`（验证：compile 零错误 · 五类故障实测符合预期 · guard 全绿 · T1 51 例 / 8 文件未降 · 打包面无 `src/ test/ tools/`）
+- **偏差**：`REQUEST_TIMEOUT_MS` 由开工稿 400ms 改为 **500ms**——依据 2026-10-06 真实端点实测（会话首请求 429ms、稳态 152–213ms），400ms 会在冷启动误触发 `ERR-02`；已回写 `03` §2.1 与 `400-build` §3.1（`ADR-007` 预案路径：只动 `constants.ts` 与 `03` 注记）
+- **发现**：① 双 question 并行几乎零延迟成本（1q 中位 174ms vs 2q 190ms，输出 token 21→84），印证 `03` §2.1 单请求双 question 设计；② `noul` 判定对 `state` 噪声极敏感（同一段鉴权代码，干净 state 得 0.97、`diff_hunk` 填充噪声后降至 0.26）→ 结构化 `instructions` 由「可选」升为 S2 必需项；③ 真实 `choice` 响应带 `confidence` 与完整 `probabilities`，与 `03` §2.1 逐字一致，仿真端点 schema 有基准可对
+- **失误**：无
+- **遗留**：T2 契约测试待 S2/S6 落地（`test:integration` 现为显式占位，退出码 0 但不产出断言）；O2 埋点仍整体顺延；仿真端点的 `disconnect` 在 Worker 形态退化为 `599` + 标记头，`ERR-01` 断言以 Node 形态为准
