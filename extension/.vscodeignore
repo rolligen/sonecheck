@@ -8,5 +8,5 @@ src/
 test/
 harness/
 tools/
-vitest.config.*
+vitest*.config.mts
 **/*.map

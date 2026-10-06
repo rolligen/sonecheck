@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createRiskEngine, normalizeConfig } from '../src/core';
-import { createMockJevClient, LocalFailure, readSourceLines, readStagedDiff, resolveRepoRoot } from '../src/infra';
+import { LocalFailure, readSourceLines, readStagedDiff, resolveRepoRoot } from '../src/infra';
+import { createMockJevClient } from './fixtures/jevScoring';
 
 const created: string[] = [];
 
