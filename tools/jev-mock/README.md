@@ -17,9 +17,9 @@ MOCK_LATENCY_MS=120 node tools/jev-mock/local.mjs
 # 换端口
 PORT=9000 node tools/jev-mock/local.mjs
 
-# 真实 workerd 运行时（需 wrangler；部署需 Cloudflare 账号）
-npx wrangler dev    --config tools/jev-mock/wrangler.toml
-npx wrangler deploy --config tools/jev-mock/wrangler.toml
+# 真实 workerd 运行时 / Cloudflare Worker（**可选**，wrangler 按需拉取，不入项目依赖）
+npx wrangler@^4 dev    --config tools/jev-mock/wrangler.toml
+npx wrangler@^4 deploy --config tools/jev-mock/wrangler.toml
 ```
 
 健康检查：`curl http://127.0.0.1:8787/health`

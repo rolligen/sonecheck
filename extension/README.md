@@ -83,8 +83,9 @@ endpoint, so tests and manual acceptance never depend on a live vendor:
 
 ```bash
 node tools/jev-mock/local.mjs                                   # zero-dependency, 127.0.0.1:8787
-npx wrangler dev   --config tools/jev-mock/wrangler.toml       # real workerd runtime
-npx wrangler deploy --config tools/jev-mock/wrangler.toml      # one-click Cloudflare Worker
+# optional: real workerd runtime / one-click Cloudflare Worker (wrangler fetched on demand)
+npx wrangler@^4 dev    --config tools/jev-mock/wrangler.toml
+npx wrangler@^4 deploy --config tools/jev-mock/wrangler.toml
 ```
 
 Fault injection for the five failure faces: request header

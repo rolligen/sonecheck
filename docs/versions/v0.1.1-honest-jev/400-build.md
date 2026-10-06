@@ -92,7 +92,7 @@
 - **步骤拆解**：
   1. `src/constants.ts` 增量：`REQUEST_TIMEOUT_MS = 500`（2026-10-06 真实端点实测定案：首请求 429ms / 稳态 152–213ms，见 `03` §2.1）、`RETRY_MAX_ATTEMPTS = 1`、`RETRY_BACKOFF_MS = 150`、`MAX_CONCURRENCY = 4`、`JEV_ENDPOINT_DEFAULT = 'https://api.typesafe.ai/v1/systemone'`（纯数据）
   2. 新建 `tools/jev-mock/`：`worker.mjs`（`export default { fetch }` 骨架）+ `wrangler.toml`（`name: jev-mock`、`main: worker.mjs`、`compatibility_date`）+ `README.md`（本地起服 / 部署 / 故障注入用法）
-  3. `extension/package.json`：`devDependencies` 增 `wrangler`（仅 dev）；`scripts` 增 `test:integration` 占位（S6 填充）；`test` 聚合改为 `test:unit && test:integration`
+  3. `extension/package.json`：`scripts` 增 `test:integration` 占位（S6 填充）；`test` 聚合改为 `test:unit && test:integration`。**`wrangler` 不入 `devDependencies`**（修正原开工稿）：T2 与 S7 真机验收都走零依赖的 `local.mjs`，wrangler 只服务「可选的一键部署」，按需 `npx wrangler@^4` 拉取即可——省 25MB 依赖与 lockfile 膨胀
   4. `extension/.vscodeignore` 增列 `tools/`（`tools/` 在仓库根，不在 `extension/`，此条为防御性登记；`vsce ls` 复核打包面不含仿真端点）
 - **输入输出与前置条件**：前置 `v0.1.0` 工程基线；后置 `npm run compile` 零错误、`npx wrangler dev` 能起仿真端点并响应健康检查
 - **异常与边界**：`wrangler` 首次运行需本地 workerd 下载——离线环境以 `README.md` 的纯 Node 兜底命令（`node tools/jev-mock/local.mjs`）替代（仿真逻辑同源复用）

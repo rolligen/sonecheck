@@ -108,6 +108,7 @@
 - Cloudflare Worker 兼容模块（`export default { fetch }`，零运行时依赖）：`npx wrangler dev` 本地起服务、`npx wrangler deploy` 一键部署；`wrangler` 仅 devDependency。
 - 契约面 = `03` §2.1（请求 / 响应 / 错误码全集）；故障注入经请求头 `x-jev-mock-fault: timeout | disconnect | http500 | rate429 | badschema`，五类故障分别映射 `ERR-02` / `ERR-01` / `ERR-03` / `ERR-04` / `ERR-05`。
 - 双用途：T2 契约测试的连接目标 + S7 真机验收的端点；不进 `.vsix`。
+- **定位演进（2026-10-06 修订）**：Jev Key 已到位、真实端点可用后，本端点**从「注册暂停期的替身」改为「可编程故障注入夹具」**——真实端点无法按需制造 `disconnect` / `timeout` / `badschema` / `429` / `500`，故 `ERR-01`~`ERR-05` 与 `INV-04` 的自动化证据只能由本端点提供；真实端点则专责「上游真实分布校准」（延迟、`noul` 分布、schema 漂移）。两者职责不重叠，互不替代（`ADR-007` 的决策本身不变，仅理由更新，按 ADR 纪律不改其原文）。
 
 ---
 
