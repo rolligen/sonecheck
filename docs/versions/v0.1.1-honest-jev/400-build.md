@@ -219,11 +219,14 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 
 | 函数 | 场景 | 预期（given-when-then） |
 |------|------|------------------------|
-| `normalizeConfig` | endpoint 非 https | given `endpoint = 'http://x'` → when 归一 → then 回退默认且不抛错 |
+| `normalizeConfig` | endpoint 非法 / 非 https 且非回环 | given `'http://example.com'` 或空串或非 URL → when 归一 → then 回退默认且不抛错 |
+| `normalizeConfig` | endpoint 为回环 http | given `'http://127.0.0.1:8787/v1/systemone'` → when 归一 → then **保留**（契约仿真端点与自托管网关场景，`ADR-007`） |
 | `inspect` | 并发上限 | given 20 个 payload + stub 每请求 50ms → when inspect → then 在飞峰值 ≤ 4 且总耗时 ≈ 250ms（非 1000ms） |
 | `inspect` | 部分失败 | given 3/13 块 `failure: 'ERR-03'` → when inspect → then `items` 10 条且 `degraded` 含 `{ code: 'ERR-03', count: 3 }` |
 | `inspect` | 全部失败 | given 全部块 `failure` → when inspect → then `items` 为空、`degraded` 非空（空清单有可解释原因） |
 | `inspect` | 未配置 Key | given `hasApiKey()` 为 false → when inspect → then 返回 `skipped: 'NO_KEY'` 且**不抛异常**、不发任何请求 |
+| `inspect` | 降级归因排序可复现 | given 多次运行产生同一组失败码 → when 比较两次 `degraded` → then 逐项相等（`count` 降序、同计数按 `code` 升序） |
+| `inspect` | 用户主动关闭 | given `enabled: false` → when inspect → then 返回 `{ items: [], degraded: [], skipped: null }` 且不发请求——**不计入「可解释的空清单」不变式**（`items` 为空但用户本就关闭了功能） |
 | `setApiKeyFlow` | 取消 | given 用户 Esc → when 流程结束 → then 原值不变、无提示残留 |
 
 ### 3.6 S5 Egress Migration

@@ -214,7 +214,7 @@
 | workspace 配置 | `sonecheck.maxItems` | `number` | `1 ≤ v ≤ 20`，默认 `3` | 清单条数上限（Top-K） |
 | workspace 配置 | `sonecheck.enabled` | `boolean` | 默认 `true` | 全局开关 |
 | workspace 配置 | `sonecheck.sensitivePathPatterns` | `string[]` | 默认含 `auth` / `payment` / `migration` 等 | 供 `local_metadata.touches_sensitive_path` 使用 |
-| workspace 配置 | `sonecheck.endpoint` | `string` | 须为 https URL；默认官方判定端点（`ADR-007`） | 判定服务端点；测试 / 自托管网关覆盖 |
+| workspace 配置 | `sonecheck.endpoint` | `string` | 须为 https URL；**http 仅允许本机回环**（`127.0.0.1` / `localhost` / `[::1]`）——供契约仿真端点与自托管网关使用，其余非 https 一律回退默认；默认官方判定端点（`ADR-007`） | 判定服务端点；测试 / 自托管网关覆盖 |
 
 - **迁移策略**：配置项只做**纯增量追加**；重命名或语义变更必须走 `dm-adr` 并提供默认值回退，禁止静默变更含义。
 
