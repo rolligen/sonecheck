@@ -73,5 +73,104 @@
 - [ ] 验收标准已确认（含契约仿真端点验收环境）
 - [ ] 相关设计文档已评审通过（`300-design.md`）
 - [ ] 测试策略已定义（见 `300-design.md` §7；T2 首次引入）
-- [ ] 关键测试场景已通过（T1 ≥75 例 / 9 文件、T2 ≥11 例，两层只增不降）
+- [ ] 关键测试场景已通过（T1 ≥107 例 / 12 文件、T2 ≥12 例，两层只增不降）
 - [ ] `.vsix` 打包成功并可在干净 VS Code 上安装（对仿真端点）
+
+---
+
+## 5. 真机验收清单（对契约仿真端点）
+
+> §2 给判据，本节给**可复现的操作步骤**。收口时逐项勾选并填结果，结果摘要写入 `500-schedule.md` §3 的 S7 执行记录。
+> 全程**不需要真实 Jev Key**——端点是本地仿真，鉴权不被校验；这也正是「代码全真、只差上游」的验证方式（`ADR-007`）。
+
+### 5.1 验收环境准备
+
+```bash
+# ① 安装产物（干净 VS Code）
+code --install-extension extension/sonecheck-0.1.1.vsix
+code --list-extensions --show-versions | grep sonecheck      # 期望 rolligen.sonecheck@0.1.1
+
+# ② 起契约仿真端点（无预设故障）
+PORT=8787 node tools/jev-mock/local.mjs &
+curl -s http://127.0.0.1:8787/health                        # 期望 ok:true、faults 八项
+
+# ③ 夹具：13 块暂存改动（1 敏感路径 + 12 低风险）
+cd ~/dev/sonedemo && git reset -q
+printf 'export function login() {\n  if (!token) return null;\n  return true;\n}\n' > src/auth/login.ts
+for i in $(seq -w 1 12); do printf 'export function util%s(a) {\n  return a + %s;\n}\n' "$i" "$i" > "src/utils/util$i.js"; done
+git add -A && git --no-pager diff --staged --stat | tail -1   # 期望 13 files changed
+
+# ④ 工作区配置（否则会打到真实上游）
+#    settings.json： "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone"
+```
+
+> 全部命令须在 VS Code 的 **`sonedemo` 窗口**内执行检查——扩展读的是当前窗口的工作区。
+
+### 5.2 逐项操作与期望
+
+| # | 验收项 | 操作 | 期望结果 | 判据 |
+|---|---|---|---|---|
+| 1 | Key 配置与保密 | `SoneCheck: Set Jev API Key` → 输入 `apikey_local_mock_placeholder` | 提示「已保存 Jev API Key」；工作区与 settings **无明文** | `03` `INV-03` / `API-03` |
+| 2 | 真实判定链路 | 跑 `SoneCheck: Inspect Staged Diff` | 清单弹出，条目 `[0.90] src/auth/login.ts:1 · 鉴权边界`；点击跳到第 1 行 | `200-spec` §2 第 3 行 |
+| 3 | 未配 Key 宽限 | `setApiKey` → **输入空串** → 确认清除 → 跑检查 → **再跑一次** | 清除后首次：一次性引导（带「设置 Key」按钮）+ 状态栏 `未配置 Key`；第二次：**仅**状态栏；两次都**不弹清单、不进错误态** | `ADR-006` / `ERR-08` |
+| 4 | Key 清除 | 同上第三步的确认弹窗 | 二次确认后清除；取消则保留原值 | `ERR-11` / `ERR-10` |
+| 5 | 降级全谱 | 见 §5.3 引导循环，逐个故障观察 | 八个故障各自映射到正确的归因标签；**每次都不弹清单、不阻断**、状态栏 `已跳过` | `200-spec` §2 第 4 行 / `INV-04` |
+| 6 | 重试与超时 | 循环中的 `rate429` / `timeout` | 用户侧无差别；上游侧 `GET /stats` 的 `byFault.rate429` = **块数 × 2**（1 次 + 1 次重试） | `03` §2.1 重试策略 |
+| 7 | 并发与性能 | 13 块多跑几轮 | 体感无卡顿；`/stats` 的 `inFlight.peak` **≤ 4** 且 **> 1** | `02` §4 / `MAX_CONCURRENCY` |
+| 8 | 工作区只读 | 检查前后各跑一次 `git status --porcelain` 并 diff | 两次输出**完全一致** | `INV-05` |
+
+### 5.3 降级全谱引导循环
+
+扩展的普通请求不带故障头，故降级需由**端点侧预设**（`MOCK_FAULT`）。逐个观察、逐个确认：
+
+```bash
+cd /Users/woo/dev/sonecheck
+for f in disconnect timeout http500 unauthorized forbidden rate429 rate529 badschema; do
+  pkill -f jev-mock/local.mjs; sleep 0.5
+  MOCK_FAULT=$f PORT=8787 node tools/jev-mock/local.mjs >/dev/null 2>&1 &
+  sleep 1
+  echo "── 跑一次检查，期望提示："
+  case $f in
+    disconnect|http500) echo "   已跳过 13 块改动（网络不可达 / 服务异常）";;
+    timeout)            echo "   已跳过 13 块改动（服务超时）";;
+    unauthorized|forbidden|rate429|rate529) echo "   已跳过 13 块改动（Key 或配额不可用）";;
+    badschema)          echo "   已跳过 13 块改动（响应不合规）";;
+  esac
+  read -r "按回车继续 → "
+done
+```
+
+| 注入故障 | 上游状态 | 归因标签 | 对应错误码 |
+|---|---|---|---|
+| `disconnect` | 连接被切断 | 网络不可达 | `ERR-01` |
+| `timeout` | 挂起 3s | 服务超时 | `ERR-02` |
+| `http500` | `500` | 服务异常 | `ERR-03` |
+| `unauthorized` | `401` | Key 或配额不可用 | `ERR-04` |
+| `forbidden` | `403` | Key 或配额不可用 | `ERR-04` |
+| `rate429` | `429`（重试 1 次） | Key 或配额不可用 | `ERR-04` |
+| `rate529` | `529`（重试 1 次） | Key 或配额不可用 | `ERR-04` |
+| `badschema` | `200` 但不合规 | 响应不合规 | `ERR-05` |
+
+### 5.4 上游侧客观证据（收口时由 AI 读取并记录）
+
+```bash
+curl -s http://127.0.0.1:8787/stats
+# byFault.rate429 / byFault.rate529  → 每块各 2 次（1 + 1 重试）
+# inFlight.peak                       → 并发峰值，须 ≤ 4 且 > 1
+# total                               → 总请求数
+```
+
+### 5.5 验收记录（收口时填写）
+
+| # | 验收项 | 结果 | 备注 |
+|---|---|---|---|
+| 1 | Key 配置与保密 | ☐ | |
+| 2 | 真实判定链路 | ☐ | |
+| 3 | 未配 Key 宽限 | ☐ | |
+| 4 | Key 清除 | ☐ | |
+| 5 | 降级全谱（8 故障） | ☐ | |
+| 6 | 重试与超时 | ☐ | |
+| 7 | 并发与性能 | ☐ | |
+| 8 | 工作区只读 | ☐ | |
+
+> **范围外**：Marketplace 上架（待 `VSCE_PAT`）与真实端点校准（待 Jev Key，`ADR-007` 挂账）——两者均 `[DEFERRED]`，不阻塞本版收口。

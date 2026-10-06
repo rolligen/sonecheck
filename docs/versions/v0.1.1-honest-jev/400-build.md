@@ -262,7 +262,7 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 - **目标**：真机验收（对仿真端点）、产物与版本收口。
 - **步骤拆解**：
   1. `npm run compile` + `npx @vscode/vsce package`；`vsce ls` 复核不含 `tools/` 与 Key 相关面
-  2. 起仿真端点（`npx wrangler dev` 或已部署 Worker）；干净 VS Code 安装 `.vsix`，设置 `sonecheck.endpoint` 指向仿真端点，按 `200-spec` §2 逐项人工验收（八项）
+  2. 起仿真端点（`npx wrangler dev` 或已部署 Worker；亦可用零依赖兜底 `node tools/jev-mock/local.mjs`，`MOCK_FAULT` 预设故障供降级全谱）；干净 VS Code 安装 `.vsix`，设置 `sonecheck.endpoint` 指向仿真端点，按 `200-spec` §2 逐项人工验收（八项）——**可复现的操作步骤、故障引导循环与验收记录表见 `200-spec` §5**
   3. 契约结构 lint 全绿（关版本门禁，与 S6 同命令）
   4. 合并回 `main`（**保留完整提交历史，禁止 squash**；优先 `git merge --ff-only`）+ 打 annotated tag `v0.1.1` 并推送
   5. 勾选版本 Issue 的 Step checklist，输出追踪矩阵；Marketplace 上架 `[DEFERRED]`（待 `VSCE_PAT`）与「真机校准待 Key」一并登记到 Issue 评论与 `500-schedule` 执行记录
