@@ -192,7 +192,7 @@ Content-Type: application/json
 |---|---|
 | `POST /v1/systemone` + `Bearer` | 采用；endpoint 可经 `CFG-01` `sonecheck.endpoint` 覆盖 |
 | `state`（结构化对象） | 采用：四字段 `file_path` / `change_type` / `diff_hunk` / `context_code` |
-| `model` | 采用（**固定 ID vs 别名待定，见 §5 提示**） |
+| `model` | 采用，**固定 `jev-1.13.0`**（上游建议固定 ID 保可复现；理由与升级路径见 `03` §2.1 与本文 §5） |
 | `noul`（`risk_score`） | 采用：概率 → `score` |
 | `choice`（`reason_code`，5 项 `criteria`） | 采用：`choice` → `reasonCode`；`confidence` / `probabilities` 本版不消费 |
 | `score` 原语 | **不采用**（`ADR-005`：有序级别值需再归一到 0–1） |

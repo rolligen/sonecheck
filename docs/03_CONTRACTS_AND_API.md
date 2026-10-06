@@ -56,14 +56,14 @@
 - **归属 / 调用方**：`infra/jevClient` / 由 `core/riskEngine` 调用
 - **幂等性**：幂等（同一 `state` + `questions` 重复提交返回语义等价判定）
 - **超时**：单请求超时上限 **500ms**（定案依据 2026-10-06 真实端点实测：会话内**首请求 429ms**（冷 TLS + 服务端预热）、稳态 152–213ms；原定 400ms 会在冷启动误触发 `ERR-02`；500ms 等于 `00` §3 单块判定预算上限，不破层级）；超时视为 `ERR-02` 走降级，**不重试**
-- **版本兼容性**：请求侧固定 `model: "jev-latest"`；响应体 `model` 字段返回**实际执行的锁定版本**（如 `jev-1.13.0`），须写入日志以便追溯判定口径变化
+- **版本兼容性**：请求侧**固定版本 ID** `model: "jev-1.13.0"`，**不使用 `jev-latest` / `jev-preview` 浮动别名**——上游明确建议需要结果可复现时固定 ID（别名会随新版本自动迁移，客户端不改而回答会变）；且本项目的 `riskThreshold` 系按分布校准，模型漂移会直接使校准失效。响应体 `model` 字段返回**实际执行的版本**，须随判定结果留痕以便追溯口径变化。**升级路径为主动动作**：先在 S3 / 目标版本用真实端点复核新版本表现（含阈值重校准），确认后再改本字段与 `constants.ts`
 - **上游规范**：TypeSafe 官方 API reference（`https://docs.typesafe.ai/api`）为唯一权威；本节只登记**本项目使用的子集**，不重定义上游语义。**全文参考快照**（端点 / 三型 question / 响应 / 错误码全集 / 模型版本 / `confidence` 公式 / 实测校准）见 `docs/reference/jev-api.md`——只读参考，非我方契约
 
 **Request**（全部输入装入 `state`；`questions` 为原子问题映射，key 由本项目定义）
 
 ```json
 {
-  "model": "jev-latest",
+  "model": "jev-1.13.0",
   "state": {
     "file_path": "string  // 仓库相对路径",
     "change_type": "MODIFY | ADD | DELETE",
