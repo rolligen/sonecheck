@@ -21,7 +21,7 @@
 |---|-----|------|------|---------|------|---------|---------|------|
 | 1 | v0.1.1-dev-01 | dev | 开发 | **S0 Scaffold & Clean**：`constants.ts` 增量、`tools/jev-mock/` 骨架、依赖与打包面登记。详见 `400-build` §3.1 | ★★☆☆☆ | 1h | `npm run compile` 零错误；仿真端点可起服并通过健康检查 | ✅ |
 | 2 | v0.1.1-dev-02 | dev | 设计 | **S1 Contract & ADR**：ADR-006/007 核对回填、`03` 失败面按上游实测补 `400`/`403` 归类、**`model` 固定为 `jev-1.13.0`**、冻结 `secrets` 四签名、**契约仿真端点按实测收紧 + 补鉴权/529 注入**。详见 `400-build` §3.2 | ★★★☆☆ | 1.5h | `03` 纯增量回写完成；无 `jev-latest` 残留；签名与 `02` §2 逐字一致；mock 对上游实测口径逐项对齐且不宽松；契约 lint 零漂移 | ✅ |
-| 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点注入面复核 + T2 契约测试骨架（故障全谱 8 个状态码）。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 故障全谱 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ⬜ |
+| 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点注入面复核 + T2 契约测试骨架（故障全谱 8 个状态码）。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 故障全谱 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ✅ |
 | 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：并发 4 复核（注入延迟曲线）、**真实端点复核（条件式：超时 / `noul` 分布 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★☆☆☆ | 1.5h | 翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ⬜ |
 | 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、并发编排与 `failure` 剔除、`setApiKey` 命令。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过 | ⬜ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ⬜ |
@@ -58,3 +58,11 @@
 - **发现**：① 真实上游错误面比原登记**多两个状态码**（`400` 用法错误 / `403` 未带 Key 头——**无 header 是 403、Key 错才是 401**）；② 上游明确建议**生产固定版本 ID**，别名漂移会使按分布校准的阈值失效；③ `noul` **不返回 `confidence`**（不确定性由概率自身承载，`≈0.5` 表示自述不确定），我方实现与之一致
 - **失误**：无
 - **遗留**：T2 契约测试待 S2 / S6 落地（`test:integration` 现为显式占位）；mock 的 `usage` 与判定值为**确定性占位值**，真实分布由 S3 真实端点校准采集
+
+#### S2 Real Client & Mock Worker（8eac40d）
+
+- **概要**：`infra/jevClient` 从本地 mock 换成真实 HTTP 客户端——wire 组装（结构化 `instructions` + 反引号字段引用 + `noul` 的 `true/false` criteria）、固定模型 ID、`AbortController` 超时、`429`/`529` 重试一次、八类状态码归一为 `ERR-01`~`05`；`DecisionResult` 纯增量 `failure`，**恒 resolve 不抛**（保住「部分成功」）。mock 打分移入 `test/fixtures/` 作夹具；**T2 契约测试首次落地**（验证：T1 75 例 / 9 文件（棘轮 51→75）· T2 11 例全绿 · 重试次数从上游侧 `/stats` 断言 · 超时实测 507ms · Key 不入载荷端到端断言 · guard / compile / 契约 lint 全绿 · 打包面无泄漏）
+- **偏差**：① 装配层暂用占位依赖（`endpoint` 取默认、`getApiKey` 返回 `null`）以保持可编译，`S4` 换成 `sonecheck.endpoint` 与 `infra/secrets`——否则 S2 无法在「客户端已重写、装配未做」之间保持绿灯；② T1/T2 拆成两份 vitest 配置（`vitest*.config.mts`），单配置无法让 `npm test` 干净聚合两层
+- **发现**：① 契约实现时发现 `03` §2.4 把 `CONFIG_CHANGE` / `HIGH_FANOUT` 标为 `v0.1.1`，与 `200-spec` §1.1 / `05` §2.2 的**顺延**登记矛盾——已按后两者修正为 `v0.2.0`（客户端只发 5 项 criteria）；② `.vscodeignore` 的 `vitest.config.*` 漏配新增的 `vitest.integration.config.mts`，已被 `vsce ls` 抓到并修正为 `vitest*.config.mts`；③ 重试次数只能从**上游侧**观察——为此给 mock 加了 `/stats`
+- **失误**：新增的「响应缺 `noul`」用例首版用 `undefined` 覆盖，解构默认值把字段填回导致假失败，改为显式构造缺字段
+- **遗留**：响应 `model` 的运行期留痕随 O2 顺延（本版以 T2 断言 + S3 真实校准确认「响应版本 = 固定 ID」）；`riskEngine` 的并发编排与 `failure` 剔除归 `S4`
