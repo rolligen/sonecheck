@@ -58,7 +58,8 @@ No API key, no source file and no telemetry leaves your machine in this release.
 Design contracts live in [`docs/`](https://github.com/rolligen/sonecheck/tree/main/docs)
 (written in Chinese): wire contracts and error codes in
 `docs/03_CONTRACTS_AND_API.md`, version plans under `docs/versions/`, decisions in
-`docs/adrs/`.
+`docs/adrs/`, and a read-only offline snapshot of the upstream Jev API in
+`docs/reference/`.
 
 ### TypeSafe skill (recommended when working with an agent)
 
@@ -109,6 +110,10 @@ Never commit a key, and never place one in `.dev.vars`, `wrangler.toml` or `.env
 
 - TypeSafe documentation: <https://docs.typesafe.ai>
 - HTTP API reference: <https://docs.typesafe.ai/api>
+- Offline snapshot of the full Jev API (endpoint, question types, responses, error
+  codes, model versions, confidence formulas, measured calibration):
+  [`docs/reference/jev-api.md`](https://github.com/rolligen/sonecheck/blob/main/docs/reference/jev-api.md)
+  — read-only; the official docs above stay authoritative.
 
 ---
 
