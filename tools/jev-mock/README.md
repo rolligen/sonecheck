@@ -24,8 +24,17 @@ npx wrangler@^4 deploy --config tools/jev-mock/wrangler.toml
 
 健康检查：`curl http://127.0.0.1:8787/health`
 
+**预设故障（真机验收用）**：扩展的普通请求不会带故障头，要复现降级全谱需由端点侧预设：
+
+```bash
+MOCK_FAULT=rate429 node tools/jev-mock/local.mjs   # 此后该端点对所有请求注入 429
+```
+
+请求头仍可临时覆盖预设值（T2 即用此方式逐个注入）。未知故障名一律 `400 unsupported_fault`。
+
 请求计数（T2 断言重试次数的唯一可观测点，读增量、无 reset）：
-`curl http://127.0.0.1:8787/stats` → `{ total, byFault, lastRequest }`
+`curl http://127.0.0.1:8787/stats` → `{ total, byFault, inFlight, lastRequest }`，
+其中 `inFlight.peak` 是上游观测到的并发峰值（T2 断言 ≤ `MAX_CONCURRENCY`）。
 
 > `lastRequest` 只记录**请求体**，绝不记录 header——这样 T2 可以断言「客户端没把
 > Key 放进载荷」（`INV-03`），而 mock 自身不成为泄密面。

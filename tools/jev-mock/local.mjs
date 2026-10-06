@@ -14,7 +14,9 @@ import { createHandler } from './handler.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
 const latencyMs = Number(process.env.MOCK_LATENCY_MS ?? 0);
-const handle = createHandler({ latencyMs });
+// 预设故障：扩展的普通请求不带故障头，真机验收靠它复现降级全谱
+const defaultFault = process.env.MOCK_FAULT ?? null;
+const handle = createHandler({ latencyMs, defaultFault });
 
 const server = createServer((incoming, outgoing) => {
   void serve(incoming, outgoing).catch((error) => {
@@ -46,5 +48,7 @@ async function serve(incoming, outgoing) {
 }
 
 server.listen(port, '127.0.0.1', () => {
-  process.stdout.write(`jev-mock listening on http://127.0.0.1:${port} (latencyMs=${latencyMs})\n`);
+  process.stdout.write(
+    `jev-mock listening on http://127.0.0.1:${port} (latencyMs=${latencyMs}, defaultFault=${defaultFault ?? 'none'})\n`,
+  );
 });

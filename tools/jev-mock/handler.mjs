@@ -95,22 +95,25 @@ const detailError = (errorType, message) => ({ detail: { error_type: errorType, 
 const detailField = (loc, msg) => ({ detail: [{ type: 'missing', loc, msg, input: undefined }] });
 
 /**
- * @param {{ latencyMs?: number }} [options] `latencyMs` 为注入的固定延迟（S3 耗时曲线用）
+ * @param {{ latencyMs?: number, defaultFault?: string | null }} [options]
+ *   `latencyMs` 为注入的固定延迟（S3 耗时曲线用）；
+ *   `defaultFault` 用于**真机验收**——扩展的普通请求不带故障头，
+ *   需由端点侧预设（`MOCK_FAULT`）才能复现降级全谱。
  * @returns {(request: Request) => Promise<Response | { kind: 'disconnect' }>}
  */
-export function createHandler({ latencyMs = 0 } = {}) {
+export function createHandler({ latencyMs = 0, defaultFault = null } = {}) {
   return async function handle(request) {
     inFlight.current += 1;
     inFlight.peak = Math.max(inFlight.peak, inFlight.current);
     try {
-      return await route(request, latencyMs);
+      return await route(request, latencyMs, defaultFault);
     } finally {
       inFlight.current -= 1;
     }
   };
 }
 
-async function route(request, latencyMs) {
+async function route(request, latencyMs, defaultFault) {
   const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -120,6 +123,7 @@ async function route(request, latencyMs) {
         questionTypes: QUESTION_TYPES,
         faults: SUPPORTED_FAULTS,
         latencyMs,
+        defaultFault,
       });
     }
 
@@ -131,7 +135,7 @@ async function route(request, latencyMs) {
     if (url.pathname !== '/v1/systemone') return json({ error: 'not_found' }, 404);
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
-    const fault = request.headers.get(FAULT_HEADER);
+    const fault = request.headers.get(FAULT_HEADER) ?? defaultFault;
     if (fault !== null && !SUPPORTED_FAULTS.includes(fault)) {
       return json({ error: 'unsupported_fault', fault }, 400);
     }
