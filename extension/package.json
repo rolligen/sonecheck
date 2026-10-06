@@ -35,11 +35,20 @@
       {
         "command": "sonecheck.inspectDiff",
         "title": "SoneCheck: Inspect Staged Diff"
+      },
+      {
+        "command": "sonecheck.setApiKey",
+        "title": "SoneCheck: Set Jev API Key"
       }
     ],
     "configuration": {
       "title": "SoneCheck",
       "properties": {
+        "sonecheck.endpoint": {
+          "type": "string",
+          "default": "https://api.typesafe.ai/v1/systemone",
+          "description": "Decision endpoint override. Must be https; plain http is allowed only on loopback hosts (127.0.0.1 / localhost / [::1]) for the contract mock or a self-hosted gateway. Invalid values fall back to the default."
+        },
         "sonecheck.riskThreshold": {
           "type": "number",
           "default": 0.4,

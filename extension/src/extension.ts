@@ -1,8 +1,9 @@
 import type * as vscode from 'vscode';
 
-import { JEV_ENDPOINT_DEFAULT } from './constants';
 import { createRiskEngine } from './core';
-import { createJevClient, readSourceLines, readStagedDiff, resolveRepoRoot } from './infra';
+import { createJevClient, createSecrets, readRawConfig, readSourceLines, readStagedDiff, resolveRepoRoot } from './infra';
+import type { Secrets } from './infra';
+import { normalizeConfig } from './core';
 import { registerCommands } from './ui/commands';
 
 /**
@@ -14,23 +15,24 @@ import { registerCommands } from './ui/commands';
  * (`ADR-002`).
  */
 export function activate(context: vscode.ExtensionContext): void {
+  // SecretStorage arrives as a port, so this module is the only place that
+  // knows the host API exists (`02` §2「密钥边界」).
+  const secrets: Secrets = createSecrets(context.secrets);
+
   const engine = createRiskEngine({
     resolveRepoRoot,
     readStagedDiff,
     readSourceLines,
-    // S4 replaces the two placeholders below: the endpoint comes from
-    // `sonecheck.endpoint` (normalized in `core/config`) and the key from
-    // `infra/secrets` (`API-03`). Until then every decision resolves to the
-    // `ERR-08` pass-through, i.e. the list stays empty rather than wrong.
-    createClient: (policy) =>
-      createJevClient({
-        endpoint: JEV_ENDPOINT_DEFAULT,
-        getApiKey: async () => null,
-        policy,
-      }),
+    hasApiKey: () => secrets.hasApiKey(),
+    createClient: (policy) => {
+      // The endpoint is normalized per inspection: it is a workspace setting and
+      // may change without a reload (`CFG-01`).
+      const { endpoint } = normalizeConfig(readRawConfig());
+      return createJevClient({ endpoint, getApiKey: () => secrets.getApiKey(), policy });
+    },
   });
 
-  context.subscriptions.push(...registerCommands(engine));
+  context.subscriptions.push(...registerCommands(engine, secrets));
 }
 
 export function deactivate(): void {
