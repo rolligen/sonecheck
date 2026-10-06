@@ -22,7 +22,7 @@
 | 1 | v0.1.1-dev-01 | dev | 开发 | **S0 Scaffold & Clean**：`constants.ts` 增量、`tools/jev-mock/` 骨架、依赖与打包面登记。详见 `400-build` §3.1 | ★★☆☆☆ | 1h | `npm run compile` 零错误；仿真端点可起服并通过健康检查 | ⬜ |
 | 2 | v0.1.1-dev-02 | dev | 设计 | **S1 Contract & ADR**：ADR-006/007 核对回填、`03` 三处定案落档、`secrets` 签名冻结。详见 `400-build` §3.2 | ★★☆☆☆ | 1h | `03` 回写完成；契约 lint 零漂移 | ⬜ |
 | 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点五类故障 + T2 契约测试骨架。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 五类故障 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ⬜ |
-| 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：并发 4 复核（注入延迟曲线）、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★☆☆☆ | 1h | 翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯 | ⬜ |
+| 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：并发 4 复核（注入延迟曲线）、**真实端点复核（条件式：超时 / `noul` 分布 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★☆☆☆ | 1.5h | 翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ⬜ |
 | 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、并发编排与 `failure` 剔除、`setApiKey` 命令。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过 | ⬜ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ⬜ |
 | 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫 + T1（≥51 例）+ T2 全量 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿 | ⬜ |
@@ -34,7 +34,7 @@
 > - 仅**执行态为「执行」**的 Step 生成工作包；本版全部 Step 执行态均为「执行」，无 `⏭️ SKIPPED`，故 8 个 dev 工作包全部排程。
 > - dev 工作包完成定义 = 代码 + 部署 + 联调。部署/联调归 dev，不归 qa；qa 只验收已部署 + 已联调的功能。
 > - 环节取值：调研 / 定位 / 设计 / 规格 / 开发 / 构建 / 部署 / 联调 / 测试 / 发布。市场验证环节（营销 / 调研）排最前，dev / qa 工作包排在其后。
-> - **合计预估工时：12.5h**（dev 12.5h；`v0.1.0` 的 research-01（人工 review 时间基线）已 `[DEFERRED]` 至真实判定质量指标可用时，本版不排调研包）。
+> - **合计预估工时：13h**（dev 13h；`v0.1.0` 的 research-01（人工 review 时间基线）已 `[DEFERRED]` 至真实判定质量指标可用时，本版不排调研包）。
 
 ## 3. 执行记录（Step 完成即追加，append-only）
 

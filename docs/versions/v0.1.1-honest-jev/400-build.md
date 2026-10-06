@@ -90,7 +90,7 @@
 
 - **目标**：为本版提供常量、依赖与仿真端点的工程底座，不含业务逻辑。
 - **步骤拆解**：
-  1. `src/constants.ts` 增量：`REQUEST_TIMEOUT_MS = 400`、`RETRY_MAX_ATTEMPTS = 1`、`RETRY_BACKOFF_MS = 150`、`MAX_CONCURRENCY = 4`、`JEV_ENDPOINT_DEFAULT = 'https://api.typesafe.ai/v1/systemone'`（纯数据）
+  1. `src/constants.ts` 增量：`REQUEST_TIMEOUT_MS = 500`（2026-10-06 真实端点实测定案：首请求 429ms / 稳态 152–213ms，见 `03` §2.1）、`RETRY_MAX_ATTEMPTS = 1`、`RETRY_BACKOFF_MS = 150`、`MAX_CONCURRENCY = 4`、`JEV_ENDPOINT_DEFAULT = 'https://api.typesafe.ai/v1/systemone'`（纯数据）
   2. 新建 `tools/jev-mock/`：`worker.mjs`（`export default { fetch }` 骨架）+ `wrangler.toml`（`name: jev-mock`、`main: worker.mjs`、`compatibility_date`）+ `README.md`（本地起服 / 部署 / 故障注入用法）
   3. `extension/package.json`：`devDependencies` 增 `wrangler`（仅 dev）；`scripts` 增 `test:integration` 占位（S6 填充）；`test` 聚合改为 `test:unit && test:integration`
   4. `extension/.vscodeignore` 增列 `tools/`（`tools/` 在仓库根，不在 `extension/`，此条为防御性登记；`vsce ls` 复核打包面不含仿真端点）
@@ -133,7 +133,7 @@ async function clearKey(): Promise<void>
 
 - **目标**：真实客户端与仿真端点在同一契约下互为镜像，T2 契约测试建立。
 - **步骤拆解**：
-  1. `src/infra/jevClient.ts` 重写：`createJevClient(deps)` 工厂（`deps = { endpoint, getKey, fetchImpl? }`，`fetchImpl` 供 T1 注入）；wire 组装、`AbortController` 超时、重试、五类归一、`failure` 信号（`300-design` §4.1–4.4）
+  1. `src/infra/jevClient.ts` 重写：`createJevClient(deps)` 工厂（`deps = { endpoint, getKey, fetchImpl? }`，`fetchImpl` 供 T1 注入）；wire 组装（两个 question 的 `instructions` 用**结构化写法**并以反引号引用 `state` 字段，`risk_score` 附 `criteria: {true, false}`——见 `300-design` §4.1）、`AbortController` 超时、重试、五类归一、`failure` 信号（`300-design` §4.1–4.4）
   2. `tools/jev-mock/worker.mjs` 完整实现：合规响应 + `usage` + `model` 字段；五类故障注入
   3. `test/integration/jevContract.test.ts`：对仿真端点跑五类故障 + 超时 + 重试计数 + Key 泄漏断言（起服方式：vitest `beforeAll` 拉起 `wrangler dev --port <随机>` 或 `local.mjs` 子进程，`afterAll` 回收）
   4. `v0.1.0` 的 `scoreHunk` / `createMockJevClient` 移入 `test/fixtures/`（T1 打分用例改引 fixture，基线不降）
@@ -167,8 +167,9 @@ async function decide(payload: HunkPayload): Promise<DecisionResult>
 - **目标**：本版无待实测回填的判定阈值（`riskThreshold` 等沿用 `v0.1.0` 定案）；本步完成**并发上限复核**、`endpoint` 契约回写与第一批翻牌。
 - **步骤拆解**：
   1. 用仿真端点注入 50/100/200ms 延迟，复核 `MAX_CONCURRENCY = 4` 下 ≥10 块的端到端耗时曲线（记录进 `500-schedule` 执行记录；并发值不做调整，4 为 `02` §4 既定设计）
-  2. `03` §3 `sonecheck.endpoint` 行核对（随 ADR-007 开工前已回写，本步仅核对）
-  3. 翻牌第一批：`ERR-01`~`ERR-05` / `API-01`（真实链路）/ `INV-04` → `[CURRENT]`（以 T2 全绿为证据）；`ERR-08` / `ERR-10` / `ERR-11` / `API-03` 留待 S5/S6 证据
+  2. **真实端点复核（条件式，不阻塞收口）**：若本机已配 Jev Key（约定位置 `~/.sonecheck/jev-api-key`，**严禁进入仓库任何文件**），用 S2 harness 的真实 hunk 样本打真实端点，三件事：① 复核 `REQUEST_TIMEOUT_MS = 500` 在稳态延迟下不误触发 `ERR-02`；② 观察真实 `noul` 分布并复核 `RISK_THRESHOLD`（其现值 `0.4` 系 mock 分布所定，真身分布可能偏移）；③ 比对真实响应字段与仿真端点 schema 是否漂移。结果写进 `500-schedule` 执行记录与 `03` 注记；数值变化只动 `constants.ts`（`ADR-007` 预案）。**无 Key 则本步显式跳过，版本门禁仍以仿真端点为准**
+  3. `03` §3 `sonecheck.endpoint` 行核对（随 ADR-007 开工前已回写，本步仅核对）
+  4. 翻牌第一批：`ERR-01`~`ERR-05` / `API-01`（真实链路）/ `INV-04` → `[CURRENT]`（以 T2 全绿为证据）；`ERR-08` / `ERR-10` / `ERR-11` / `API-03` 留待 S5/S6 证据
 - **异常与边界**：仿真端点延迟无法模拟真实公网长尾——以 `ADR-007` 的「真机校准待 Key」注记兜底，不在本版强定
 
 ### 3.5 S4 Ingress Migration

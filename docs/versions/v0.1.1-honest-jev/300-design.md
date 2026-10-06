@@ -74,7 +74,8 @@
 
 ### 4.1 wire 组装与响应解析
 
-- **请求**：复用 `v0.1.0` 已落盘的 `serializePayload`（camelCase → snake_case，单测已覆盖 `INV-02`）；外层装入 `03` §2.1 的 `state` + `questions`（`risk_score` 为 `noul` 型、`reason_code` 为 `choice` 型，`criteria` 取自 §2.4 枚举——`ADR-005`）。
+- **请求**：复用 `v0.1.0` 已落盘的 `serializePayload`（camelCase → snake_case，单测已覆盖 `INV-02`）；外层装入 `03` §2.1 的 `state` + `questions`（`risk_score` 为 `noul` 型、`reason_code` 为 `choice` 型，`criteria` 取自 §2.4 枚举——`ADR-005`）。**一次请求两 question 并行**已由实测支撑：同一 payload 下 1q 中位 174ms / 2q 中位 190ms（+16ms，输出 token 21→84），与官方 "Parallel questions" 的并行收益一致。
+- **`instructions` 结构化（判定质量杠杆，非可选）**：上游支持 `instructions` 为对象 / 数组，并可在文本中用**反引号引用 `state` 内的字段名**；`noul` 另支持可选 `criteria: {true, false}`（2026-10-06 官方 API reference 核实）。本版据此把两个 question 的 `instructions` 写成结构化（问题 + 对 `state` 字段的显式引用），并给 `risk_score` 补 `true` / `false` 语义描述。**依据**：实测显示 `noul` 判定对 `state` 噪声高度敏感——同一段鉴权代码，`state` 干净时 `noul = 0.97`，`diff_hunk` 被填充噪声后降至 `0.26`（低于阈值 0.4）；payload 质量直接决定判定质量，故此为必需项。
 - **响应**：`answers.risk_score.noul` → `score`；`answers.reason_code.choice` → `reasonCode`；响应 `model` 字段记入结果供追溯（O2 落地前仅随 `failure` 诊断面保留，不做运行期日志）。`decision` 仍由本地按 `riskThreshold` 派生（`03` §2.1 本地派生表）。
 - **schema 校验**：缺字段 / 越界 / 枚举外取值 → 该块 `failure: 'ERR-05'`，其余块不受影响。
 
