@@ -23,7 +23,7 @@
 | 2 | v0.1.1-dev-02 | dev | 设计 | **S1 Contract & ADR**：ADR-006/007 核对回填、`03` 失败面按上游实测补 `400`/`403` 归类、**`model` 固定为 `jev-1.13.0`**、冻结 `secrets` 四签名、**契约仿真端点按实测收紧 + 补鉴权/529 注入**。详见 `400-build` §3.2 | ★★★☆☆ | 1.5h | `03` 纯增量回写完成；无 `jev-latest` 残留；签名与 `02` §2 逐字一致；mock 对上游实测口径逐项对齐且不宽松；契约 lint 零漂移 | ✅ |
 | 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点注入面复核 + T2 契约测试骨架（故障全谱 8 个状态码）。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 故障全谱 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ✅ |
 | 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：新增 `harness/calibrate.ts` 校准工具（`--latency` 耗时曲线 / `--live` 真实端点）、并发 4 复核、**真实端点复核（条件式：超时 / `noul` 分布与阈值复核 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★★☆☆ | 1.5h | 两条校准数据均留痕；翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ✅ |
-| 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ⬜ |
+| 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ✅ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ⬜ |
 | 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫 + T1（≥75 例 / 9 文件）+ T2 补并发峰值断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ⬜ |
 | 8 | v0.1.1-dev-08 | dev | 发布 | **S7 Verification & Close**：真机八项验收（对仿真端点）、`.vsix`、合并保留历史 + tag `v0.1.1`、Issue 收口。详见 `400-build` §3.8 | ★★☆☆☆ | 1h | `200-spec` §2 八项验收全过；tag 已推送；上架与真机校准 `[DEFERRED]` 已登记 | ⬜ |
@@ -74,3 +74,11 @@
 - **发现**：① **真实端点 36 次调用 0 次误触发超时**（p50 169–238ms、p90 240–399ms、观测最大 426ms，距 500ms 上限余量 15%–37% 属薄余量）；② **真实 `noul` 分布同样双峰**（低峰 0.03–0.19 / 高峰 0.42–0.97，`0.2`–`0.4` 为谷）→ `RISK_THRESHOLD = 0.4` 落在谷的高侧，**维持不调**；③ **端到端预算有块数边界**：24 块（6 波）≈1.2s 超出 p95 ≤ 1s，预算成立前提是单次检查 ≲16 块——已写入 `200-spec` §2
 - **失误**：首版 `takePayloads` 取样本前缀，717 个历史 hunk 把 6 个构造高风险样本挤出 → 命中率失真；改为跨来源交替抽样后重测
 - **遗留**：阈值能否下调到谷底（≈0.3）需**带标签样本**判定（当前样本无标签，无法区分假阴 / 假阳）→ 归 S7 真机观察；超时薄余量在 S7 多轮真机中复核；「全部超时」的降级路径端到端约 1.5s（3 波 × 500ms），属降级而非正常路径，不破 `INV-04`
+
+#### S4 Ingress Migration（6c70d82）
+
+- **概要**：输入侧一次接通——`infra/secrets.ts` 落地（`createSecrets(SecretStoragePort)` 暴露 S1 冻结的四签名，**零 `vscode` import**）；`sonecheck.endpoint` 入 `CFG-01` 并做回环感知归一；`sonecheck.setApiKey` 注册 + 抽出可注入纯流程 `runSetApiKey`；`inspect()` 出口改为 `InspectionReport{items, degraded, skipped}` 并以游标 worker 池并发 ≤4 保序聚合；装配层换真实依赖（验证：`compile` / `guard` / T1 **99 例 / 11 文件**（棘轮 75→99）/ T2 11 例 / 契约 lint 全绿 · `grep jevApiKey src/` 仅命中 `secrets.ts` · `grep console.log src/` 无输出 · 打包面仅 LICENSE/README/package.json + out）
+- **偏差**：① `03` 原文「`sonecheck.endpoint` 须为 https」与 `200-spec` §2 的仿真端点验收环境冲突（`local.mjs` 是 `http://127.0.0.1:8787`）——按字面执行会把 T2 与 S7 的验收端点一起回退，故澄清为「http 仅允许本机回环」（**澄清式纯增量，无编号变更**）；② `ERR-10` 契约原写「真机验证（原生输入框不可在纯 Node 复现）」，本步把 `API-03` 流程抽为可注入纯函数后**改为单测覆盖**，证据强于原要求
+- **发现**：① 契约里 `ERR-08` 的可执行验证含「产生一次性引导」，而引导与「未配置 Key」状态栏瞬时态按版本计划归 **S5**——翻牌时已把验证列精化为 S4 实际证据并显式标注 S5 待办，避免虚假「已兑现」；② 深度相等断言（`test/config.test.ts`）在 `SoneCheckConfig` 增字段后必然破裂——属契约面扩展的必然代价，已同步期望而非放宽断言
+- **失误**：① `SetApiKeyDeps` 误用 `Promise` 而 `showInputBox` 返回 `Thenable`，编译期报 `TS2739`/`TS2322`——改为 `PromiseLike`（与 `SecretStoragePort` 一致）；② `test/secrets.test.ts` 的 `INV-03` 用例先 `clearApiKey()` 再断言存储内容，顺序颠倒导致假失败——调整断言顺序
+- **遗留**：S5 补「未配置 Key」状态栏瞬时态 + 每会话至多一次的一次性引导 + 降级聚合文案（当前为最小可测文案）；`GUARD-06`（Key 泄漏守卫）脚本落盘归 S6，本步已保证代码形态满足其判定条件
