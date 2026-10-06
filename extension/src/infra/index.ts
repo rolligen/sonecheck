@@ -13,6 +13,7 @@ export { truncateToWireBytes, wireBytes } from './jevClient';
 export { LocalFailure, readStagedDiff, resolveRepoRoot } from './git';
 export { readSourceLines } from './sourceReader';
 export { readRawConfig } from './configSource';
+export { createSecrets } from './secrets';
 
 export type {
   ChangeType,
@@ -25,6 +26,7 @@ export type {
   JevRequest,
   ReasonCode,
 } from './jevClient';
+export type { SecretStoragePort, Secrets } from './secrets';
 export type { Hunk } from './diffParser';
 export type { LocalFailureCode } from './git';
 export type { RawConfig } from './configSource';

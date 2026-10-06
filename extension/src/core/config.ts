@@ -1,4 +1,11 @@
-import { MAX_ITEMS, RISK_THRESHOLD } from '../constants';
+import {
+  HTTP_PROTOCOL,
+  HTTPS_PROTOCOL,
+  JEV_ENDPOINT_DEFAULT,
+  LOOPBACK_HOSTS,
+  MAX_ITEMS,
+  RISK_THRESHOLD,
+} from '../constants';
 
 /** Normalized configuration consumed by the core pipeline (`CFG-01`). */
 export interface SoneCheckConfig {
@@ -6,6 +13,8 @@ export interface SoneCheckConfig {
   maxItems: number;
   enabled: boolean;
   sensitivePathPatterns: string[];
+  /** Decision endpoint, already normalized (`CFG-01`). */
+  endpoint: string;
 }
 
 /** Shape accepted from the infra layer, before validation. */
@@ -14,6 +23,7 @@ export interface RawConfigInput {
   maxItems?: number;
   enabled?: boolean;
   sensitivePathPatterns?: string[];
+  endpoint?: string;
 }
 
 /** `CFG-01` default sensitive paths. */
@@ -37,7 +47,35 @@ export function normalizeConfig(raw: RawConfigInput): SoneCheckConfig {
     maxItems: normalizeMaxItems(raw.maxItems),
     enabled: raw.enabled ?? true,
     sensitivePathPatterns: normalizePatterns(raw.sensitivePathPatterns),
+    endpoint: normalizeEndpoint(raw.endpoint),
   };
+}
+
+/**
+ * Normalize the decision endpoint (`CFG-01`, `ADR-007`).
+ *
+ * https anywhere is accepted; plaintext http only on loopback, which is where
+ * the contract mock and a self-hosted gateway run. Everything else — empty,
+ * unparseable, or plaintext to a remote host — falls back to the official
+ * endpoint, so a mistyped setting can never ship diff payloads in clear text.
+ */
+function normalizeEndpoint(value: string | undefined): string {
+  if (typeof value !== 'string') return JEV_ENDPOINT_DEFAULT;
+
+  const trimmed = value.trim();
+  if (trimmed === '') return JEV_ENDPOINT_DEFAULT;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return JEV_ENDPOINT_DEFAULT;
+  }
+
+  if (url.protocol === HTTPS_PROTOCOL) return trimmed;
+  if (url.protocol === HTTP_PROTOCOL && LOOPBACK_HOSTS.includes(url.hostname)) return trimmed;
+
+  return JEV_ENDPOINT_DEFAULT;
 }
 
 function normalizeRiskThreshold(value: number | undefined): number {

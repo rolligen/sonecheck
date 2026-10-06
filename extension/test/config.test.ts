@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeConfig } from '../src/core';
-import { MAX_ITEMS, RISK_THRESHOLD } from '../src/constants';
+import { JEV_ENDPOINT_DEFAULT, MAX_ITEMS, RISK_THRESHOLD } from '../src/constants';
 
 describe('normalizeConfig', () => {
   it('缺省字段补齐默认值', () => {
@@ -9,7 +9,39 @@ describe('normalizeConfig', () => {
       maxItems: MAX_ITEMS,
       enabled: true,
       sensitivePathPatterns: ['auth', 'payment', 'migration'],
+      endpoint: JEV_ENDPOINT_DEFAULT,
     });
+  });
+
+  it('endpoint 为 https 时原样保留', () => {
+    for (const value of [
+      'https://api.typesafe.ai/v1/systemone',
+      'https://gateway.internal.example/jev/v1/systemone',
+      '  https://gateway.internal.example/jev  ',
+    ]) {
+      expect(normalizeConfig({ endpoint: value }).endpoint).toBe(value.trim());
+    }
+  });
+
+  it('endpoint 为回环 http 时保留（契约仿真端点与自托管网关）', () => {
+    for (const host of ['127.0.0.1', 'localhost', '[::1]']) {
+      const endpoint = `http://${host}:8787/v1/systemone`;
+      expect(normalizeConfig({ endpoint }).endpoint).toBe(endpoint);
+    }
+  });
+
+  it('endpoint 为远端 http / 非法值 / 空串时回退默认（不得明文外发）', () => {
+    for (const value of [
+      'http://example.com/v1/systemone',
+      'http://10.0.0.5:8787/v1/systemone',
+      'ftp://api.typesafe.ai/v1/systemone',
+      'not-a-url',
+      '',
+      '   ',
+      undefined,
+    ]) {
+      expect(normalizeConfig({ endpoint: value }).endpoint).toBe(JEV_ENDPOINT_DEFAULT);
+    }
   });
 
   it('阈值越界回退默认值且不抛错', () => {
