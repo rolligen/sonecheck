@@ -81,6 +81,16 @@ export const MAX_CONCURRENCY = 4;
 export const JEV_ENDPOINT_DEFAULT = 'https://api.typesafe.ai/v1/systemone';
 
 /**
+ * Pinned model ID sent with every request (`03` §2.1).
+ *
+ * A floating alias (`jev-latest`) would migrate on the vendor's schedule: the
+ * client would not change but the answers would, silently invalidating a
+ * threshold calibrated against a distribution. Upgrading is therefore a
+ * deliberate act — re-calibrate first, then change this constant.
+ */
+export const JEV_MODEL_ID = 'jev-1.13.0';
+
+/**
  * Changed-line count at which the "change size" dimension saturates (`300-design` §4.2).
  * S3 backfills the final value from S2 Harness data.
  */

@@ -3,11 +3,11 @@
  * import (`02` §1).
  *
  * `core` depends on `IJevClient` only: the concrete implementation is injected by
- * the assembly layer, so `v0.1.1` can replace the mock without touching callers
- * (ADR-002). `src/infra/**` internals stay private.
+ * the assembly layer, so the decision service can be swapped without touching
+ * callers (`ADR-002`). `src/infra/**` internals stay private.
  */
 
-export { createMockJevClient, scoreHunk, serializePayload } from './jevClient';
+export { buildJevRequest, classifyHttpFailure, createJevClient, REASON_CODE_RUBRIC, serializePayload } from './jevClient';
 export { parseDiff } from './diffParser';
 export { truncateToWireBytes, wireBytes } from './jevClient';
 export { LocalFailure, readStagedDiff, resolveRepoRoot } from './git';
@@ -20,8 +20,10 @@ export type {
   DecisionResult,
   HunkPayload,
   IJevClient,
+  JevClientDeps,
+  JevFailureCode,
+  JevRequest,
   ReasonCode,
-  ScoreInput,
 } from './jevClient';
 export type { Hunk } from './diffParser';
 export type { LocalFailureCode } from './git';
