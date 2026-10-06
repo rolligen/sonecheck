@@ -22,7 +22,7 @@
 | 1 | v0.1.1-dev-01 | dev | 开发 | **S0 Scaffold & Clean**：`constants.ts` 增量、`tools/jev-mock/` 骨架、依赖与打包面登记。详见 `400-build` §3.1 | ★★☆☆☆ | 1h | `npm run compile` 零错误；仿真端点可起服并通过健康检查 | ✅ |
 | 2 | v0.1.1-dev-02 | dev | 设计 | **S1 Contract & ADR**：ADR-006/007 核对回填、`03` 失败面按上游实测补 `400`/`403` 归类、**`model` 固定为 `jev-1.13.0`**、冻结 `secrets` 四签名、**契约仿真端点按实测收紧 + 补鉴权/529 注入**。详见 `400-build` §3.2 | ★★★☆☆ | 1.5h | `03` 纯增量回写完成；无 `jev-latest` 残留；签名与 `02` §2 逐字一致；mock 对上游实测口径逐项对齐且不宽松；契约 lint 零漂移 | ✅ |
 | 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点注入面复核 + T2 契约测试骨架（故障全谱 8 个状态码）。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 故障全谱 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ✅ |
-| 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：新增 `harness/calibrate.ts` 校准工具（`--latency` 耗时曲线 / `--live` 真实端点）、并发 4 复核、**真实端点复核（条件式：超时 / `noul` 分布与阈值复核 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★★☆☆ | 1.5h | 两条校准数据均留痕；翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ⬜ |
+| 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：新增 `harness/calibrate.ts` 校准工具（`--latency` 耗时曲线 / `--live` 真实端点）、并发 4 复核、**真实端点复核（条件式：超时 / `noul` 分布与阈值复核 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★★☆☆ | 1.5h | 两条校准数据均留痕；翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ✅ |
 | 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ⬜ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ⬜ |
 | 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫 + T1（≥75 例 / 9 文件）+ T2 补并发峰值断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ⬜ |
@@ -66,3 +66,11 @@
 - **发现**：① 契约实现时发现 `03` §2.4 把 `CONFIG_CHANGE` / `HIGH_FANOUT` 标为 `v0.1.1`，与 `200-spec` §1.1 / `05` §2.2 的**顺延**登记矛盾——已按后两者修正为 `v0.2.0`（客户端只发 5 项 criteria）；② `.vscodeignore` 的 `vitest.config.*` 漏配新增的 `vitest.integration.config.mts`，已被 `vsce ls` 抓到并修正为 `vitest*.config.mts`；③ 重试次数只能从**上游侧**观察——为此给 mock 加了 `/stats`
 - **失误**：新增的「响应缺 `noul`」用例首版用 `undefined` 覆盖，解构默认值把字段填回导致假失败，改为显式构造缺字段
 - **遗留**：响应 `model` 的运行期留痕随 O2 顺延（本版以 T2 断言 + S3 真实校准确认「响应版本 = 固定 ID」）；`riskEngine` 的并发编排与 `failure` 剔除归 `S4`
+
+#### S3 Standard Finalization（248fc80）
+
+- **概要**：造出校准工具并跑出两条数据 + 完成第一批翻牌——`harness/calibrate.ts` 落地（`--latency` / `--live` 双模式），样本采集抽为 `samples.ts` 供 `measure.ts` 与 `calibrate.ts` 共用；翻牌 `INV-04` 与 `ERR-01`~`ERR-05`（以 T2 11 例为证据）。耗时曲线（12 块 / 并发 4）：50ms→164ms、100ms→317ms、200ms→626ms，**全部在 p95 ≤ 1s 内**且与「波数 × 单请求」理论吻合
+- **偏差**：① 修复 `v0.1.0` 遗留的 `measure.ts`——它自 S2 起已破损（仍从 `src/infra` 导入已移出的 `scoreHunk`），S2 记录里「Harness 产出分布」实际发生在 S2 之前；② 新增 `harness/vscode-shim.cjs`（dev-only）让脚本能在 Node 下运行——Facade 桶文件会传递引入 `configSource` → 需要只在扩展宿主存在的 `vscode` 模块；把 `configSource` 改注入式属 S4 范围，不为脚本提前改分层纪律
+- **发现**：① **真实端点 36 次调用 0 次误触发超时**（p50 169–238ms、p90 240–399ms、观测最大 426ms，距 500ms 上限余量 15%–37% 属薄余量）；② **真实 `noul` 分布同样双峰**（低峰 0.03–0.19 / 高峰 0.42–0.97，`0.2`–`0.4` 为谷）→ `RISK_THRESHOLD = 0.4` 落在谷的高侧，**维持不调**；③ **端到端预算有块数边界**：24 块（6 波）≈1.2s 超出 p95 ≤ 1s，预算成立前提是单次检查 ≲16 块——已写入 `200-spec` §2
+- **失误**：首版 `takePayloads` 取样本前缀，717 个历史 hunk 把 6 个构造高风险样本挤出 → 命中率失真；改为跨来源交替抽样后重测
+- **遗留**：阈值能否下调到谷底（≈0.3）需**带标签样本**判定（当前样本无标签，无法区分假阴 / 假阳）→ 归 S7 真机观察；超时薄余量在 S7 多轮真机中复核；「全部超时」的降级路径端到端约 1.5s（3 波 × 500ms），属降级而非正常路径，不破 `INV-04`
