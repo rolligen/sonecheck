@@ -1,0 +1,10 @@
+name = "jev-mock"
+main = "worker.mjs"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# 契约仿真端点（`03` §2.1 的可执行镜像）。
+# 部署后把扩展的 `sonecheck.endpoint` 指向 `https://jev-mock.<subdomain>.workers.dev` 即可。
+# 该端点**忽略 Authorization 头**——永远不要把真实 API Key 配置到仿真端点。
+[observability]
+enabled = true
