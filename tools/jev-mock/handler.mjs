@@ -56,6 +56,16 @@ const TIMEOUT_HOLD_MS = 3000;
 const requestCounts = { total: 0, byFault: {} };
 
 /**
+ * In-flight gauge and its observed peak.
+ *
+ * Concurrency is only observable from the upstream side — a client cannot prove
+ * how many of its requests overlapped. T2 asserts the peak against
+ * `MAX_CONCURRENCY` through this counter (the Node entry handles requests
+ * concurrently, so the gauge is meaningful).
+ */
+const inFlight = { current: 0, peak: 0 };
+
+/**
  * 最近一次请求体（`GET /stats` 的 `lastRequest`）。
  *
  * **只记录 body，绝不记录 header**——这样 T2 可以断言「客户端没有把 Key 放进
@@ -90,7 +100,18 @@ const detailField = (loc, msg) => ({ detail: [{ type: 'missing', loc, msg, input
  */
 export function createHandler({ latencyMs = 0 } = {}) {
   return async function handle(request) {
-    const url = new URL(request.url);
+    inFlight.current += 1;
+    inFlight.peak = Math.max(inFlight.peak, inFlight.current);
+    try {
+      return await route(request, latencyMs);
+    } finally {
+      inFlight.current -= 1;
+    }
+  };
+}
+
+async function route(request, latencyMs) {
+  const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return json({
@@ -104,7 +125,7 @@ export function createHandler({ latencyMs = 0 } = {}) {
 
     // 请求计数：供 T2 断言重试次数（只读，读增量）。
     if (request.method === 'GET' && url.pathname === '/stats') {
-      return json({ ...requestCounts, lastRequest, faults: SUPPORTED_FAULTS });
+      return json({ ...requestCounts, inFlight: { ...inFlight }, lastRequest, faults: SUPPORTED_FAULTS });
     }
 
     if (url.pathname !== '/v1/systemone') return json({ error: 'not_found' }, 404);
@@ -138,7 +159,6 @@ export function createHandler({ latencyMs = 0 } = {}) {
     }
 
     return compliantResponse(await readRequestBody(request));
-  };
 }
 
 function mockMessage(fault) {

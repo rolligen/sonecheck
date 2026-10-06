@@ -92,10 +92,11 @@
     "test": "npm run test:unit && npm run test:integration",
     "guard:01": "grep -rq \"from 'vscode'\\|require('vscode')\" src/core/ && exit 1 || exit 0",
     "guard:02": "grep -rl getConfiguration src/ | grep -v infra/configSource.ts | grep -q . && exit 1 || exit 0",
-    "guard:03": "grep -rnE \"\\b0\\.4\\b|\\b2048\\b\" src/ | grep -v constants.ts | grep -q . && exit 1 || exit 0",
+    "guard:03": "grep -rnE \"\\b0\\.4\\b|\\b2048\\b|\\b500\\b|\\b150\\b\" src/ | grep -v constants.ts | grep -q . && exit 1 || exit 0",
     "guard:04": "vitest run test/contextBuilder.test.ts test/diffParser.test.ts",
     "guard:05": "vitest run test/threshold.test.ts test/riskEngine.test.ts",
-    "guard": "npm run guard:01 && npm run guard:02 && npm run guard:03 && npm run guard:04 && npm run guard:05"
+    "guard:06": "grep -rn \"jevApiKey\" src/ | grep -v \"infra/secrets.ts\" | grep -q . && exit 1 || exit 0",
+    "guard": "npm run guard:01 && npm run guard:02 && npm run guard:03 && npm run guard:04 && npm run guard:05 && npm run guard:06"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
