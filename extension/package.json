@@ -79,7 +79,8 @@
     "watch": "tsc -watch -p ./",
     "package": "npm run compile && vsce package",
     "test:unit": "vitest run",
-    "test": "vitest run",
+    "test:integration": "node -e \"console.log('T2 contract tests land in S2/S6 (400-build 3.7)')\"",
+    "test": "npm run test:unit && npm run test:integration",
     "guard:01": "grep -rq \"from 'vscode'\\|require('vscode')\" src/core/ && exit 1 || exit 0",
     "guard:02": "grep -rl getConfiguration src/ | grep -v infra/configSource.ts | grep -q . && exit 1 || exit 0",
     "guard:03": "grep -rnE \"\\b0\\.4\\b|\\b2048\\b\" src/ | grep -v constants.ts | grep -q . && exit 1 || exit 0",
@@ -94,6 +95,7 @@
     "msw": "^2.15.0",
     "tsx": "^4.23.15",
     "typescript": "~5.7.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "wrangler": "^4.147.0"
   }
 }
