@@ -15,8 +15,8 @@
 |------|------|--------|------|------|----------|-----------|
 | INV-01 | `[CURRENT]` | 检查流程不得阻断、取消或延迟用户的提交动作；检查的全部失败都必须以「放行」收尾 | `core/riskEngine` | 内部 | 本文 §1 + `00` §3 可用性 | 单测：`test/riskEngine.test.ts`（本地失败以 `ERR-*` 分类失败抛出、成功路径恒返回 `RiskItem[]`）；`ui/commands.ts` 的 `catch` 不重抛 |
 | INV-02 | `[CURRENT]` | 任何离开本机的 payload 只含 diff hunk 与该 hunk 的限长上下文（**单块 payload ≤ 2KB = 2048 字节，含 `context_code`**），**不得包含完整源文件** | `core/contextBuilder` | 出站 | 本文 §2.1 Request | 单测：`test/contextBuilder.test.ts` 断言 payload 序列化总长 ≤ 2048；`test/diffParser.test.ts` 断言切分后单块不越界 |
-| INV-03 | `[PLANNED]` | Jev API Key 不得以明文出现在工作区文件、日志、遥测、错误信息或 UI 文本中 | `infra/secrets` | 内部 | 本文 §3 | `grep -rn "jevApiKey" src/ \| grep -v "infra/secrets.ts"` 须无输出；单测：日志字段不含 Key 值 |
-| INV-04 | `[PLANNED]` | Jev 不可用（网络失败 / 超时 / 配额耗尽 / 非 2xx）时必须降级为「静默放行 + 一次性提示」，不得向上抛错终止流程 | `infra/jevClient` | 内部 | 本文 §4 `ERR-01`–`ERR-04` | 契约测试（HTTP 层拦截注入 `401` / `429` / `529` / 超时）：断言返回降级结果、不抛错、仅提示一次 |
+| INV-03 | `[CURRENT]` | Jev API Key 不得以明文出现在工作区文件、日志、遥测、错误信息或 UI 文本中 | `infra/secrets` | 内部 | 本文 §3 | `grep -rn "jevApiKey" src/ \| grep -v "infra/secrets.ts"` 须无输出（当前：仅 `infra/secrets.ts:38`）；单测：`test/secrets.test.ts` 断言明文只经 `getApiKey` 单向流出、`test/setApiKey.test.ts` 断言任何分支不进通知文案 |
+| INV-04 | `[CURRENT]` | Jev 不可用（网络失败 / 超时 / 配额耗尽 / 非 2xx）时必须降级为「静默放行 + 一次性提示」，不得向上抛错终止流程 | `infra/jevClient` | 内部 | 本文 §4 `ERR-01`–`ERR-04` | T2 契约测试（`test/integration/jevContract.test.ts`）：对契约仿真端点注入 `disconnect` / `timeout` / `http500` / `401` / `403` / `429` / `529` / `badschema` → 断言 resolve 且 `failure` 归类正确、**无一抛异常**、重试次数符合策略 |
 | INV-05 | `[CURRENT]` | 检查过程对工作区严格只读：不得修改、暂存、格式化或删除任何文件 | `infra/git` | 内部 | `02` §3 边界说明 | 单测：`test/git.test.ts` 断言调用前后 `git status --porcelain` 完全一致；`grep`：`src/infra/git.ts` 只出现 `diff` / `rev-parse` 子命令 |
 | INV-06 | `[CURRENT]` | 清单中每一项必须可定位到真实存在的文件与行号（禁止展示无法跳转的条目） | `ui/riskList` | 内部 | 本文 §2.2 | 单测：`test/threshold.test.ts`（不可定位即剔除）与 `test/riskEngine.test.ts`（清单项的 `filePath` / `startLine` 可在真实文件中解析） |
 | INV-07 | `[CURRENT]` | 风险阈值等判定参数必须来自命名常量或配置，禁止在判定逻辑中硬编码字面量 | `core/threshold` | 内部 | `02` §2 `core/threshold`（`RISK_THRESHOLD` 命名常量） | `grep -rnE "\b0\.4\b\|\b2048\b" src/ \| grep -v "constants.ts"` 须无输出 |
@@ -49,21 +49,21 @@
 ### 2.1 `API-01` JevDecision（出站：sonecheck → Jev）
 
 - **状态**：`[CURRENT]`
-- **生效版本**：`v0.1.0` 只兑现**签名与本地派生字段**（`infra/jevClient` 为本地 mock，不发网络、不涉及 API Key）；失败面 `ERR-01`~`ERR-05` 与真实 HTTP 链路归 `v0.1.1`
-- **Path**：`POST https://api.typesafe.ai/v1/systemone`
-- **鉴权**：`Authorization: Bearer <API_KEY>`（Key 存 VS Code SecretStorage，见 §3 `CFG-01`）
+- **生效版本**：`v0.1.0` 兑现**签名与本地派生字段**（`infra/jevClient` 为本地 mock，不发网络、不涉及 API Key）；**`v0.1.1` 兑现完整真实链路**（`fetch` + 超时 + 重试 + 五类归一 + 失败面 `ERR-01`~`ERR-05`），T2 契约测试对契约仿真端点全绿（`ADR-007`）
+- **Path**：`POST <endpoint>`——默认 `https://api.typesafe.ai/v1/systemone`，可经 `CFG-01` 的 `sonecheck.endpoint` 覆盖（`ADR-007`）
+- **鉴权**：`Authorization: Bearer <API_KEY>`（Key 存 VS Code SecretStorage，见 §3 `CFG-01`）。**Key 获取**：登录 Playground 后在 `https://console.typesafe.ai/keys` 创建；官方 SDK 的环境变量名为 `TYPESAFE_API_KEY`（本项目不引 SDK，见 `ADR-004`，该变量名仅供脚本化冒烟使用）
 - **Header**：`Content-Type: application/json`
 - **归属 / 调用方**：`infra/jevClient` / 由 `core/riskEngine` 调用
 - **幂等性**：幂等（同一 `state` + `questions` 重复提交返回语义等价判定）
-- **超时**：单请求超时上限 <!-- TODO: [dm-init-docs] 由 v0.1.1 的 S3 实测回填 -->，且必须落在单块判定预算内（`00` §3：≤ 500ms）；超时视为 `ERR-02` 走降级
-- **版本兼容性**：请求侧固定 `model: "jev-latest"`；响应体 `model` 字段返回**实际执行的锁定版本**（如 `jev-1.13.0`），须写入日志以便追溯判定口径变化
-- **上游规范**：TypeSafe 官方 API reference（`https://docs.typesafe.ai/api`）为唯一权威；本节只登记**本项目使用的子集**，不重定义上游语义
+- **超时**：单请求超时上限 **500ms**（定案依据 2026-10-06 真实端点实测：会话内**首请求 429ms**（冷 TLS + 服务端预热）、稳态 152–213ms；原定 400ms 会在冷启动误触发 `ERR-02`；500ms 等于 `00` §3 单块判定预算上限，不破层级）；超时视为 `ERR-02` 走降级，**不重试**。**S3 复核（2026-10-06，36 次真实调用）**：单请求 p50 169–238ms、p90 240–399ms、观测最大 426ms，**0 次误触发**；余量约 15%–37%，属**薄余量**——公网长尾抖动可能偶发 `ERR-02`，该块按 `INV-04` 放行，不影响其他块
+- **版本兼容性**：请求侧**固定版本 ID** `model: "jev-1.13.0"`，**不使用 `jev-latest` / `jev-preview` 浮动别名**——上游明确建议需要结果可复现时固定 ID（别名会随新版本自动迁移，客户端不改而回答会变）；且本项目的 `riskThreshold` 系按分布校准，模型漂移会直接使校准失效。响应体 `model` 字段返回**实际执行的版本**，须随判定结果留痕以便追溯口径变化。**升级路径为主动动作**：先在 S3 / 目标版本用真实端点复核新版本表现（含阈值重校准），确认后再改本字段与 `constants.ts`
+- **上游规范**：TypeSafe 官方 API reference（`https://docs.typesafe.ai/api`）为唯一权威；本节只登记**本项目使用的子集**，不重定义上游语义。**全文参考快照**（端点 / 三型 question / 响应 / 错误码全集 / 模型版本 / `confidence` 公式 / 实测校准）见 `docs/reference/jev-api.md`——只读参考，非我方契约
 
 **Request**（全部输入装入 `state`；`questions` 为原子问题映射，key 由本项目定义）
 
 ```json
 {
-  "model": "jev-latest",
+  "model": "jev-1.13.0",
   "state": {
     "file_path": "string  // 仓库相对路径",
     "change_type": "MODIFY | ADD | DELETE",
@@ -124,10 +124,11 @@
 | `ERR-01` | —（连接层） | 网络不可达 / DNS 失败 | 判定结果记为「未知」，按 INV-04 放行 | 否（一次性提示） |
 | `ERR-02` | —（本地计时） | 请求超时 | 同上 | 否（一次性提示） |
 | `ERR-03` | 非 2xx 且非下表 | 其他非 2xx 响应 | 同上，日志记录状态码 | 否（一次性提示） |
-| `ERR-04` | `401` / `429` / `529` | 鉴权失败 / 超配额 / 上游过载 | 同上，提示用户检查 API Key；`429` / `529` 先指数退避重试 | 否（一次性提示） |
-| `ERR-05` | `422` | 请求体校验失败，或响应 schema 不合规（缺字段 / 越界 / `reason_code` 不在枚举内） | 该块丢弃不计入清单 | 否（写入日志） |
+| `ERR-04` | `401` / `403` / `429` / `529` | 鉴权失败（Key 错误 `401` / 未带 Key 头 `403`）/ 超配额 / 上游过载 | 同上，提示用户检查 API Key；`429` / `529` 先指数退避重试 | 否（一次性提示） |
+| `ERR-05` | `400` / `422` | 请求不合规（未知 question `type`、`noul` 缺 `instructions` 且无 `criteria` → `400 api_usage_error`；缺字段 / `choice` 缺 `criteria` → `422`），或响应 schema 不合规（缺字段 / 越界 / `reason_code` 不在枚举内） | 请求侧不合规与响应侧不合规**均**丢弃该块不计入清单 | 否（写入日志） |
 
-- **重试策略**：仅对 `429` / `529` 做指数退避（上限 <!-- TODO: [dm-init-docs] 由 v0.1.1 的 S3 实测回填 -->），其余状态码不重试；含退避在内的总耗时不得超过端到端预算（`00` §3：p95 ≤ 1s）。本项目**手写 `fetch` + 退避函数**，不引入官方 SDK（避免额外依赖，见 `01` §2 依赖限制）。
+- **重试策略**：仅对 `429` / `529` 重试 **1 次**（退避 150ms，`ADR-007` 定案），其余状态码不重试；该路径的实际上界 ≈850ms（实测限流响应 ~200ms + 退避 150ms + 重试 ≤500ms），仍在 `00` §3 端到端 p95 ≤ 1s 内——超时路径不重试，故不与超时上界叠加。本项目**手写 `fetch` + 退避函数**，不引入官方 SDK（避免额外依赖，见 `01` §2 依赖限制）。
+- **错误体不解析**：上游错误体的 `detail` 形态**不固定**（对象 / 数组 / 字符串三种均出现过，如 `422` 返回逐字段的校验明细）。本项目**只按状态码归一、不解析 body**——上游改文案或改明细结构都不会影响归一逻辑；错误体的原文仅在需要人工排查时由人直接查看。
 - **严禁静默吞错**：纯函数式失败返回空 / 原值而非 nil；危险失败不得静默，须调用前拦截并显式暴露（`dev-meta/docs/06` §5）。
 
 ---
@@ -152,16 +153,16 @@
 |--------|------|----------|----------|
 | `ERR-06` | 工作区非 git 仓库 | 提示一次，终止 | 否 |
 | `ERR-07` | 暂存区无改动 | 提示一次「无暂存改动」 | 否 |
-| `ERR-08` | API Key 未配置 | 提示一次并给出配置指引 | 否 |
+| `ERR-08` | API Key 未配置 | 宽限跳过：首次一次性引导（`ADR-006`），检查视为零风险放行 | 否 |
 | `ERR-09` | git 可执行文件缺失 | 提示一次，终止 | 否 |
 
-> `ERR-08` 归属 `API-02`（Key 前置校验），生效版本为 `v0.1.1`——本表是 `API-02` 的**完整失败面**，生效版本以 §4 为准。
+> `ERR-08` 归属 `API-02`（Key 前置校验），生效版本为 `v0.1.1`，自 `ADR-006` 起为**宽限跳过语义**（非终止）——本表是 `API-02` 的**完整失败面**，生效版本以 §4 为准。
 
 ---
 
 ### 2.3 `API-03` 命令 `sonecheck.setApiKey`（VS Code 命令契约）
 
-- **状态**：`[PLANNED]`
+- **状态**：`[CURRENT]`（`v0.1.1` 落地：`ui/commands` 注册命令 + `infra/secrets` 写入 SecretStorage；分支逻辑抽为可注入纯流程 `runSetApiKey`，故 `ERR-10` / `ERR-11` 可单测）
 - **Path**：VS Code 命令 ID `sonecheck.setApiKey`
 - **Method**：命令调用（无参）
 - **归属 / 调用方**：`ui/commands` / 由用户手动触发
@@ -189,11 +190,11 @@
 | `DATA_WRITE` | 数据写入 / 事务变更 | INSERT / UPDATE / DELETE、事务边界、金额字段 | `v0.1.0` |
 | `CONTRACT_BREAK` | 对外接口或 Schema 破坏性变更 | 函数签名、REST / RPC 字段、数据表结构变更 | `v0.1.0` |
 | `ERROR_HANDLING` | 异常处理 / 重试逻辑变更 | 删除 try-catch、改重试退避、吞掉错误 | `v0.1.0` |
-| `CONFIG_CHANGE` | 配置或密钥相关变更 | 环境变量、超时值、连接池、密钥读取方式 | `v0.1.1` |
-| `HIGH_FANOUT` | 高引用数符号变更 | 导出函数 / 公共类型被多个调用方引用 | `v0.1.1` |
+| `CONFIG_CHANGE` | 配置或密钥相关变更 | 环境变量、超时值、连接池、密钥读取方式 | `v0.2.0` |
+| `HIGH_FANOUT` | 高引用数符号变更 | 导出函数 / 公共类型被多个调用方引用 | `v0.2.0` |
 | `STYLE_ONLY` | 纯样式 / 注释 / 格式化 | 空行、引号、注释、文档字符串（预期得低分） | `v0.1.0` |
 
-- **生效版本**：`v0.1.0` 的判定器只产出标 `v0.1.0` 的 5 项（`CONFIG_CHANGE` / `HIGH_FANOUT` 需配置解析与引用计数能力，未在当前版本交付）。本表为**完整枚举集合**，未生效项仍属合规取值，仅当前实现不会产出。
+- **生效版本**：`v0.1.0`（本地 mock）与 `v0.1.1`（真实判定服务）**都只产出 5 项**——`CONFIG_CHANGE` / `HIGH_FANOUT` 需配置解析与引用计数能力（`local_metadata.caller_count`），归 `v0.2.0`（见 `200-spec` §1.1 与 `05` §2.2 的顺延登记）。请求侧 `criteria` 只发送这 5 项，模型不可能返回枚举外取值。本表为**完整枚举集合**，未生效项仍属合规取值，仅当前实现不会产出。
 - **单值返回**：一个 hunk 命中多个维度时，返回**影响面最大**的一个；`reason_code` 不支持多值。
 - **新增取值**属纯增量：须在本表登记并回写编号（见 §5）。
 
@@ -203,8 +204,8 @@
 
 **`CFG-01` 配置项与密钥存储**（状态 `[CURRENT]`）
 
-- **生效版本**：`v0.1.0` 兑现 4 项 workspace 配置；`sonecheck.jevApiKey`（SecretStorage 行）随 `API-03` 归 `v0.1.1`。
-- **默认值依据**：`riskThreshold` 默认值由 S2 Harness 实测回填（436 个 hunk：规模噪声地板 `0.20`、语义命中自 `0.40` 起；阈值取噪声地板的 2.0 倍，命中率 1.4%，且敏感路径命中必 `AUDIT`）。
+- **生效版本**：`v0.1.0` 兑现 4 项 workspace 配置；`sonecheck.jevApiKey`（SecretStorage 行）与 `sonecheck.endpoint`（`ADR-007` 纯增量）随 `v0.1.1` 落地。
+- **默认值依据**：`riskThreshold` 默认值由 S2 Harness 实测回填（mock 分布：规模噪声地板 `0.20`、语义命中自 `0.40` 起；阈值取噪声地板的 2.0 倍）。**S3 真实端点复核（24 块跨来源样本）**：真实 `noul` 分布同样**双峰**——低峰 `0.03`–`0.19`（14 块）、高峰 `0.42`–`0.97`（10 块），**`0.2`–`0.4` 为谷**；`0.4` 正落在谷的高侧，语义命中必 `AUDIT` 的验收场景成立 → **维持 0.4 不调**。是否可下调到谷底（≈0.3）需**带标签样本**判定（当前样本无标签，无法区分假阴 / 假阳），列为遗留项
 
 | 实体 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|------|
@@ -213,6 +214,7 @@
 | workspace 配置 | `sonecheck.maxItems` | `number` | `1 ≤ v ≤ 20`，默认 `3` | 清单条数上限（Top-K） |
 | workspace 配置 | `sonecheck.enabled` | `boolean` | 默认 `true` | 全局开关 |
 | workspace 配置 | `sonecheck.sensitivePathPatterns` | `string[]` | 默认含 `auth` / `payment` / `migration` 等 | 供 `local_metadata.touches_sensitive_path` 使用 |
+| workspace 配置 | `sonecheck.endpoint` | `string` | 须为 https URL；**http 仅允许本机回环**（`127.0.0.1` / `localhost` / `[::1]`）——供契约仿真端点与自托管网关使用，其余非 https 一律回退默认；默认官方判定端点（`ADR-007`） | 判定服务端点；测试 / 自托管网关覆盖 |
 
 - **迁移策略**：配置项只做**纯增量追加**；重命名或语义变更必须走 `dm-adr` 并提供默认值回退，禁止静默变更含义。
 
@@ -222,19 +224,19 @@
 
 | 错误码 | 状态 | 含义 | 级别 | 处理建议 | 生效版本 | 可执行验证 |
 |--------|------|------|------|----------|----------|-----------|
-| `ERR-01` | `[PLANNED]` | 网络不可达 | WARN | 降级放行 + 一次性提示（INV-04） | `v0.1.1` | 契约测试：HTTP 层拦截为连接失败 → 断言不抛错且留痕 `errCode` |
-| `ERR-02` | `[PLANNED]` | 请求超时 | WARN | 降级放行 + 一次性提示（INV-04） | `v0.1.1` | 契约测试：注入超过超时常量的延迟 → 断言按 `ERR-02` 降级 |
-| `ERR-03` | `[PLANNED]` | 非 2xx 响应 | WARN | 降级放行，日志记录状态码 | `v0.1.1` | 契约测试：返回 `500` → 断言日志含 `httpStatus = 500` |
-| `ERR-04` | `[PLANNED]` | 配额耗尽 / 鉴权失败 | ERROR | 降级放行 + 引导检查 API Key | `v0.1.1` | 契约测试：`401` / `429` / `529` → 断言退避次数 ≤ 重试上限且最终降级 |
-| `ERR-05` | `[PLANNED]` | 响应 schema 不合规 | ERROR | 丢弃该块，写入日志，不进入清单 | `v0.1.1` | 单测：缺字段 / 越界 / 枚举外取值各一例 → 断言该块被丢弃、其余块保留 |
+| `ERR-01` | `[CURRENT]` | 网络不可达 | WARN | 降级放行 + 一次性提示（INV-04） | `v0.1.1` | T2 契约测试：注入 `disconnect`（Node 端真断连）→ 断言 `failure = ERR-01` 且不抛错 |
+| `ERR-02` | `[CURRENT]` | 请求超时 | WARN | 降级放行 + 一次性提示（INV-04） | `v0.1.1` | T2 契约测试：注入 `timeout`（挂起 3s）→ 断言约 500ms 放弃、`failure = ERR-02`、不重试 |
+| `ERR-03` | `[CURRENT]` | 非 2xx 响应 | WARN | 降级放行，日志记录状态码 | `v0.1.1` | T2 契约测试：注入 `http500` → 断言 `failure = ERR-03` 且不重试 |
+| `ERR-04` | `[CURRENT]` | 配额耗尽 / 鉴权失败（`401` Key 错误 / `403` 未带 Key 头 / `429` / `529`） | ERROR | 降级放行 + 引导检查 API Key；仅 `429` / `529` 重试 | `v0.1.1` | T2 契约测试（仿真端点注入 `unauthorized` / `forbidden` / `rate429` / `rate529`）：断言 `401` / `403` 不重试、`429` / `529` 退避次数 ≤ 上限且最终降级 |
+| `ERR-05` | `[CURRENT]` | 请求不合规（`400` / `422`）或响应 schema 不合规 | ERROR | 丢弃该块，写入日志，不进入清单 | `v0.1.1` | T1 + T2：请求侧未知 `type` → `400`、`choice` 缺 `criteria` → `422`（经 `/stats.lastRequest` 断言实发请求体）；响应侧缺字段 / 越界 / 枚举外取值各一例 → 断言该块被丢弃、其余块保留 |
 | `ERR-06` | `[CURRENT]` | 非 git 仓库 | WARN | 提示一次并终止 | `v0.1.0` | 单测：`test/git.test.ts` 断言非仓库目录抛出分类失败 `ERR-06` |
 | `ERR-07` | `[CURRENT]` | 暂存区无改动 | INFO | 提示一次「无暂存改动」 | `v0.1.0` | 单测：`test/riskEngine.test.ts` 断言空 diff 抛出分类失败 `ERR-07` |
-| `ERR-08` | `[PLANNED]` | API Key 未配置（`API-02` 前置校验） | ERROR | 提示一次并给出 `sonecheck.setApiKey` 指引 | `v0.1.1` | 单测：密钥可读性为 `false` → 断言终止并给出配置指引 |
+| `ERR-08` | `[CURRENT]` | API Key 未配置（`API-02` 前置校验；宽限跳过语义，`ADR-006`） | WARN | 首次：一次性引导（带「设置 Key」按钮直达 `sonecheck.setApiKey`）；检查静默跳过（视为放行）；后续仅状态栏短暂提示 | `v0.1.1` | 单测（`test/riskEngine.test.ts`）：可读性为 `false` → 返回 `skipped: 'NO_KEY'`、**零请求零判定、不抛异常**，且优先于 `ERR-07`；`grep console.log src/` 无输出保证状态非错误。**一次性引导与「未配置 Key」状态栏瞬时态待 S5 落地** |
 | `ERR-09` | `[CURRENT]` | git 可执行文件缺失 | ERROR | 提示一次并终止 | `v0.1.0` | 单测：`test/git.test.ts` / `src/infra/git.ts` 的 `ENOENT` 分类分支（真机不可复现，以代码分支 + 分类断言为准） |
-| `ERR-10` | `[PLANNED]` | 用户取消输入（`API-03`） | INFO | 忽略，保持原值 | `v0.1.1` | 真机验证（原生输入框不可在纯 Node 复现）：取消后原值不变 |
-| `ERR-11` | `[PLANNED]` | 输入为空串（清除 Key，`API-03`） | WARN | 二次确认后清除 | `v0.1.1` | 单测：二次确认布尔为 `false` → 断言保留原值；真机验证确认路径 |
+| `ERR-10` | `[CURRENT]` | 用户取消输入（`API-03`） | INFO | 忽略，保持原值 | `v0.1.1` | 单测（`test/setApiKey.test.ts`）：`promptInput` 解析为 `undefined` → 断言零写入、零清除、零提示（`API-03` 流程已抽为可注入纯函数，故不必真机复现） |
+| `ERR-11` | `[CURRENT]` | 输入为空串（清除 Key，`API-03`） | WARN | 二次确认后清除 | `v0.1.1` | 单测（`test/setApiKey.test.ts`）：确认为 `false` → 保留原值且不写入；确认为 `true` → 清除并提示；未配置 Key 时空串不弹确认 |
 
-- **生效版本**：`v0.1.0` 只落地 `ERR-06` / `ERR-07` / `ERR-09`（本地失败路径，不依赖网络与密钥）；`ERR-01`~`ERR-05` 随真实判定服务在 `v0.1.1` 落地，`ERR-08`（归 `API-02`）与 `ERR-10` / `ERR-11`（归 `API-03`）同版落地。本表为**完整错误码集合**，未生效项仍属合规返回值，仅当前实现不会产出。
+- **生效版本**：`v0.1.0` 只落地 `ERR-06` / `ERR-07` / `ERR-09`（本地失败路径，不依赖网络与密钥）；`ERR-01`~`ERR-05` 随真实判定服务在 `v0.1.1` 落地（对契约仿真端点验收，`ADR-007`），`ERR-08`（归 `API-02`，宽限语义 `ADR-006`）与 `ERR-10` / `ERR-11`（归 `API-03`）同版落地。本表为**完整错误码集合**，未生效项仍属合规返回值，仅当前实现不会产出。
 - **状态翻牌**：错误码状态与其 `生效版本` 同步——对应版本 S3 实测回填后由 `[PLANNED]` 翻 `[CURRENT]`；未生效项保持 `[PLANNED]`（`dev-meta/docs/06` §4.2）。
 
 ---
@@ -257,6 +259,7 @@
 | `01_TECHNICAL_SPEC.md` | upstream | 技术选型与约束 |
 | `02_SYSTEM_DESIGN.md` | upstream | 架构与数据流 |
 | `dev-meta/docs/06-contract-based-dev.md` | 外部权威 | 契约规范：§4 记录 / §4.2 状态 / §6 组织与索引 / §7 引用纪律（只引用） |
+| `docs/reference/jev-api.md` | 关联 | 上游 Jev API 的**全文参考快照**（2026-10-06）——只读查阅用；权威仍为官方文档（见 §2.1 上游规范） |
 
 ---
 
@@ -269,7 +272,7 @@
 | 判据 | 当前值 | 状态 |
 |------|--------|------|
 | 契约条数 ≤ 30 | 22 条 | ✅ 未超 |
-| 文件行数 ≤ 300 | 359 行（2026-09-22） | ⚠️ **超限** |
+| 文件行数 ≤ 300 | 367 行（2026-10-06 复核） | ⚠️ **超限** |
 
 - **本轮决定**：**登记豁免、暂不拆分**。理由：拆分须先冻结编号集合，再脚本批量改全仓引用并跑结构 lint（`dev-meta/docs/06` §6.8），属独立议题；与语义修订混做会放大引用断裂风险。
 - **语义锚点同步延后**：契约条目注入锚点属拆分迁移序列中的一步（§7.3），随拆分一并执行；当前仅 §1 保留 `INV-02` 的形态示范。

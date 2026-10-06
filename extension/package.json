@@ -35,11 +35,20 @@
       {
         "command": "sonecheck.inspectDiff",
         "title": "SoneCheck: Inspect Staged Diff"
+      },
+      {
+        "command": "sonecheck.setApiKey",
+        "title": "SoneCheck: Set Jev API Key"
       }
     ],
     "configuration": {
       "title": "SoneCheck",
       "properties": {
+        "sonecheck.endpoint": {
+          "type": "string",
+          "default": "https://api.typesafe.ai/v1/systemone",
+          "description": "Decision endpoint override. Must be https; plain http is allowed only on loopback hosts (127.0.0.1 / localhost / [::1]) for the contract mock or a self-hosted gateway. Invalid values fall back to the default."
+        },
         "sonecheck.riskThreshold": {
           "type": "number",
           "default": 0.4,
@@ -79,7 +88,8 @@
     "watch": "tsc -watch -p ./",
     "package": "npm run compile && vsce package",
     "test:unit": "vitest run",
-    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "test": "npm run test:unit && npm run test:integration",
     "guard:01": "grep -rq \"from 'vscode'\\|require('vscode')\" src/core/ && exit 1 || exit 0",
     "guard:02": "grep -rl getConfiguration src/ | grep -v infra/configSource.ts | grep -q . && exit 1 || exit 0",
     "guard:03": "grep -rnE \"\\b0\\.4\\b|\\b2048\\b\" src/ | grep -v constants.ts | grep -q . && exit 1 || exit 0",

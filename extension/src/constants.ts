@@ -53,6 +53,59 @@ export const MAX_ITEMS = 3;
 export const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 
 /**
+ * Per-request timeout of the decision call, in milliseconds.
+ *
+ * Settled from a live-endpoint measurement (2026-10-06): the first request of a
+ * session costs 429 ms (cold TLS + service warm-up), steady state is 152-213 ms.
+ * The original 400 ms budget therefore produced a false `ERR-02` on cold start;
+ * 500 ms is the ceiling of the per-hunk decision budget (`00` §3), so it is the
+ * largest value that keeps the numeric hierarchy intact. Timeouts are **not**
+ * retried — only `429` / `529` are (`03` §2.1).
+ */
+export const REQUEST_TIMEOUT_MS = 500;
+
+/** Retry attempts for `429` / `529` only, on top of the first attempt. */
+export const RETRY_MAX_ATTEMPTS = 1;
+
+/** Backoff before the single retry. Keeps the 429 path under the p95 budget. */
+export const RETRY_BACKOFF_MS = 150;
+
+/** Maximum in-flight decision requests per inspection (`02` §4). */
+export const MAX_CONCURRENCY = 4;
+
+/**
+ * Default decision endpoint. Overridable per workspace via
+ * `sonecheck.endpoint` (`CFG-01`) for the contract mock, a proxy or a
+ * self-hosted gateway — never for a different vendor's API shape.
+ */
+export const JEV_ENDPOINT_DEFAULT = 'https://api.typesafe.ai/v1/systemone';
+
+/**
+ * Pinned model ID sent with every request (`03` §2.1).
+ *
+ * A floating alias (`jev-latest`) would migrate on the vendor's schedule: the
+ * client would not change but the answers would, silently invalidating a
+ * threshold calibrated against a distribution. Upgrading is therefore a
+ * deliberate act — re-calibrate first, then change this constant.
+ */
+export const JEV_MODEL_ID = 'jev-1.13.0';
+
+/**
+ * Allowed URL schemes for `sonecheck.endpoint` (`CFG-01`).
+ *
+ * `https` is required for any real endpoint; `http` is tolerated **only** for
+ * the loopback hosts below, which is what the contract mock and a
+ * self-hosted gateway run on. Anything else falls back to
+ * `JEV_ENDPOINT_DEFAULT` — an inspection must never be able to ship a diff
+ * payload over plaintext to a remote host.
+ */
+export const HTTPS_PROTOCOL = 'https:';
+export const HTTP_PROTOCOL = 'http:';
+
+/** Hosts for which plaintext `http` is allowed (`CFG-01`, `ADR-007`). */
+export const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost', '[::1]'];
+
+/**
  * Changed-line count at which the "change size" dimension saturates (`300-design` §4.2).
  * S3 backfills the final value from S2 Harness data.
  */

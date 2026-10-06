@@ -42,21 +42,22 @@
 | `src/ui/commands.ts` | 命令编排：读取配置 → 调 core → 分发结果给展示层 | `registerCommands()` | 私有 |
 | `src/ui/riskList.ts` | QuickPick 风险清单 + 条目跳转定位 | `showRiskList()` | 私有 |
 | `src/ui/status.ts` | 状态栏与一次性提示（All Clear / 降级提示） | `reportStatus()` | 私有 |
-| `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K | `inspect()` | 私有 |
+| `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K，并产出**检查报告**（清单 + 降级归因 + 宽限标记） | `inspect()` | 私有 |
 | `src/core/contextBuilder.ts` | 为每个 hunk 补上下文行，控制 payload ≤ 2KB | `buildContext()` | 私有 |
 | `src/core/threshold.ts` | 阈值判定与排序（RISK_THRESHOLD 常量，禁魔数） | `filterRisky()` | 私有 |
 | `src/core/config.ts` | 配置模型与校验：校验阈值范围、归一默认值（纯逻辑，**不接触 VS Code API**） | `normalizeConfig()` | 私有 |
-| `src/infra/configSource.ts` | 从 `workspace.getConfiguration` 与 SecretStorage 读取原始配置 / 密钥可用性（唯一接触 VS Code 配置 API 的出口） | `readRawConfig()` / `hasApiKey()` | 私有 |
+| `src/infra/configSource.ts` | 从 `workspace.getConfiguration` 读取原始 workspace 配置（唯一接触 VS Code 配置 API 的出口；**密钥不归本模块**） | `readRawConfig()` | 私有 |
 | `src/infra/git.ts` | 取工作区根、执行 `git diff --staged`（含本地失败分类：`ERR-06` / `ERR-09`） | `resolveRepoRoot()` / `readStagedDiff()` | 私有 |
 | `src/infra/sourceReader.ts` | 只读读取工作区源文件行（供上下文截断；文件缺失返回空数组） | `readSourceLines()` | 私有 |
 | `src/infra/diffParser.ts` | diff 文本 → hunk 数组（文件、起始行、变更类型、内容；超长 hunk 按 payload 上限切分） | `parseDiff()` | 私有 |
-| `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `IJevClient` / `decide()` | 私有 |
-| `src/infra/secrets.ts` | API Key 读写（VS Code SecretStorage） | `getApiKey()` / `setApiKey()` | 私有 |
+| `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `createJevClient()` / `IJevClient` / `decide()` / `buildJevRequest()` / `classifyHttpFailure()` | 私有 |
+| `src/infra/secrets.ts` | API Key 读写的**唯一出口**（VS Code SecretStorage；`INV-03`） | `hasApiKey()` / `getApiKey()` / `setApiKey()` / `clearApiKey()` | 私有 |
 | `src/infra/logger.ts` | `observe()` 包装器 + Output Channel 输出 | `observe()` / `log(event)` | 私有 |
 
 > **极简暴露**：每模块仅经统一 Facade / 入口文件对外暴露，内部实现全部私有（见 `dev-meta/docs/09-ai-architecture-guide.md` §2）。
 > **判定服务抽象**：`core` 只依赖经 `src/infra/index.ts` 导出的 `IJevClient` 抽象，**禁止 import `infra/jevClient` 具体路径**；具体实现由装配层 `src/extension.ts` 在激活时注入，测试注入内存 stub 替换。
 > **错误码映射归属**：上游状态码 → 契约错误码的映射**唯一归属** `infra/jevClient`（错误归一）；`core` 与 `ui` 不得各自维护映射表，`ui` 只按已归一结果提示。
+> **密钥边界**：SecretStorage 只由 `infra/secrets` 接触；`configSource` 只读 workspace 配置；Key 明文不得出现在其他任何模块（`INV-03`，守卫 `GUARD-06`）。
 
 ---
 
@@ -90,16 +91,17 @@
 | 状态 / 阶段 | 进入条件 | 下一状态（推进条件） | 失败面 |
 |-------------|----------|----------------------|--------|
 | `Idle` | 激活后初始态 / 上一次检查收尾 | `Collecting`（用户触发命令） | — |
-| `Collecting` | 命令触发（前置校验 → 读配置并归一 → 执行 `git diff --staged` → 切块） | `Deciding`（配置与 hunk 数组均就绪） | **终止**（提示一次后回 `Idle`）：非 git 仓库 / git 不可用 / 暂存区无改动 / API Key 未配置 |
+| `Collecting` | 命令触发（前置校验 → 读配置并归一 → 执行 `git diff --staged` → 切块） | `Deciding`（配置与 hunk 数组均就绪） | **终止**（提示一次后回 `Idle`）：非 git 仓库 / git 不可用 / 暂存区无改动；**跳过**（宽限，见四分类）：API Key 未配置 |
 | `Deciding` | 配置已归一、hunk 数组已就绪 | `Reporting`（全部 hunk 判定返回） | **降级**（一次性提示后回 `Idle`，按放行处理）：网络不可达 / 超时 / 非 2xx / 配额耗尽；**丢弃单块**（剔除该块，流程继续）：判定响应不合规 |
 | `Reporting` | 判定完成 | `Idle`（清单关闭 / 选中条目 / 状态提示结束） | — |
 | `Degraded` | 仅由 `Deciding` 的降级分支进入 | `Idle`（一次性提示结束） | — |
 
-- **失败面三分类**（互不混用，须与契约失败面同口径）：
+- **失败面四分类**（互不混用，须与契约失败面同口径）：
 
 | 类别 | 触发条件 | 状态归属 | 用户可见表现 |
 |------|----------|----------|--------------|
 | **终止** | 本机环境前置校验失败（未产生任何判定） | 不进入 `Degraded`，自 `Collecting` 直接回 `Idle` | 一次性提示 |
+| **跳过** | 判定前置条件缺失但非故障（API Key 未配置；`ADR-006`） | 不进入 `Deciding`，自 `Collecting` 直接回 `Idle` | 首次一次性引导（带「设置 Key」按钮）+ 后续状态栏瞬时；**不算失败、不算终止** |
 | **降级** | 判定服务侧不可用（网络 / 超时 / 非 2xx / 配额） | `Deciding` → `Degraded` → `Idle` | 一次性提示 + 放行 |
 | **丢弃单块** | 单块判定响应不合规 | 状态不变，整轮检查继续 | 无打扰（仅留痕） |
 

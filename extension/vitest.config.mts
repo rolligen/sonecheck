@@ -15,6 +15,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['test/**/*.test.ts'],
+    // T1 only: pure Node, no sockets. T2 lives in `vitest.integration.config.mts`.
+    include: ['test/*.test.ts'],
   },
 });

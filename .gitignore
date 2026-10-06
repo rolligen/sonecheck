@@ -144,5 +144,9 @@ dist
 # See docs/private/README.md
 /docs/private/
 
+# CodeBuddy 项目数据目录：本地规划快照不入库（与 docs/ 内容重复且会过期）。
+# 同目录下的 skills/ 故意入库，见 CODEBUDDY.md「本项目例外」。
+/.codebuddy/plans/
+
 # vsce build output
 *.vsix

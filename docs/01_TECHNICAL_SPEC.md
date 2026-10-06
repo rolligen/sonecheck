@@ -11,9 +11,9 @@
 | 层面 | 选型 | 版本 | 选型理由 / 决策记录 |
 |------|------|------|---------------------|
 | 语言 / 运行时 | TypeScript + Node.js | TypeScript `~5.7.0`；Node 22.x（VS Code 内置运行时，`@types/node` 固定 `^22.0.0`） | 与 VS Code Extension API 同源，零额外分发成本；**类型定义大版本必须与运行时一致**——`@types/node` 用更高大版本会允许调用宿主不存在的 API，编译通过但运行期失败；TypeScript 迁移决策见 [`adrs/adr-001.md`](adrs/adr-001.md) |
-| 框架 | VS Code Extension API（无 Webview 框架） | VS Code 稳定版 | 原生 QuickPick / 状态栏足以覆盖 v0.1.0 交互，避免 Webview 调试开销 |
+| 框架 | VS Code Extension API（无 Webview 框架） | VS Code 稳定版 | 原生 QuickPick / 状态栏足以覆盖 0.1.x 交互，避免 Webview 调试开销 |
 | 存储 | VS Code `SecretStorage`（Key）+ `workspace.getConfiguration`（阈值、开关） | — | Key 不落盘明文；配置跟随用户设置同步 |
-| 第三方服务 | Jev Decision API（TypeSafe AI） | `POST https://api.typesafe.ai/v1/systemone`；`model: "jev-latest"`（官方文档 `https://docs.typesafe.ai/api`） | System-1 结构化判定（`noul` / `choice` / `score` 三原语），输出免费、延迟量级为亚秒级；是本产品的成本与速度前提，实际延迟须经 M1 实测回填 |
+| 第三方服务 | Jev Decision API（TypeSafe AI） | `POST https://api.typesafe.ai/v1/systemone`；`model: "jev-1.13.0"`（**固定版本 ID**，不用浮动别名；官方文档 `https://docs.typesafe.ai/api`，全文参考快照见 `docs/reference/jev-api.md`） | System-1 结构化判定（`noul` / `choice` / `score` 三原语），输出免费、延迟量级为亚秒级；是本产品的成本与速度前提，实际延迟须经 M1 实测回填 |
 | 构建 / 打包 | `@vscode/vsce` → `.vsix` | `^4.0` | 官方打包链，支持 GitHub Release 与 Marketplace 双通道 |
 | 测试框架 | Vitest（T1 / T2）+ MSW（T2 网络层拦截）；T3 走真机人工 | `vitest ^5.0` / `msw ^2.15` | 纯 Node 场景零配置跑 TS；T2 必须在 HTTP 层拦截才能真实验证退避与超时。决策见 [`adrs/adr-003.md`](adrs/adr-003.md) |
 
@@ -65,7 +65,7 @@
 | 项 | 内容 |
 |----|------|
 | 目标环境 | 开发者本机 VS Code（开发态：Extension Development Host） |
-| 构建命令 | `npm run compile`（tsc）+ `npx @vscode/vsce package`；`extension/package.json` 的 `scripts` 与 `tsconfig.json` 尚未落盘，随 `v0.1.0` 脚手架补齐 |
+| 构建命令 | `npm run compile`（tsc）+ `npx @vscode/vsce package`；`extension/package.json` 的 `scripts` 与 `tsconfig.json` 已随 `v0.1.0` 脚手架落盘并持续使用 |
 | 发布方式 | 双通道：① GitHub Release 附带 `.vsix`；② VS Code Marketplace 发布（Publisher `rolligen`，清单见 `extension/package.json`） |
 | 回滚方式 | Marketplace 侧发布新版本覆盖；GitHub 侧删除 Release 资产或回退 tag |
 | 配置与密钥 | Jev API Key 经 VS Code SecretStorage 存储；阈值 / 开关经 `workspace.getConfiguration("sonecheck")`；仓库内**禁止**出现任何真实 Key |

@@ -53,6 +53,70 @@ No API key, no source file and no telemetry leaves your machine in this release.
 
 ---
 
+## Develop
+
+Design contracts live in [`docs/`](https://github.com/rolligen/sonecheck/tree/main/docs)
+(written in Chinese): wire contracts and error codes in
+`docs/03_CONTRACTS_AND_API.md`, version plans under `docs/versions/`, decisions in
+`docs/adrs/`, and a read-only offline snapshot of the upstream Jev API in
+`docs/reference/`.
+
+### TypeSafe skill (recommended when working with an agent)
+
+The official TypeSafe skill documents the System-1 primitives this extension depends
+on (Jev `noul` / `choice` questions, threshold guidance, parallel-question behaviour):
+
+```bash
+# any agent runtime (CodeBuddy, Cursor, Codex, …)
+npx skills add typesafe-ai/skills --skill typesafe-ai
+
+# Claude Code
+claude plugin marketplace add typesafe-ai/skills
+claude plugin install typesafe@typesafe-ai
+```
+
+`skills-lock.json` is committed so every contributor gets the same skill version.
+
+### Contract mock endpoint (`tools/jev-mock/`)
+
+`0.1.1` develops the real HTTP client against a contract-faithful mock of the decision
+endpoint, so tests and manual acceptance never depend on a live vendor:
+
+```bash
+node tools/jev-mock/local.mjs                                   # zero-dependency, 127.0.0.1:8787
+# optional: real workerd runtime / one-click Cloudflare Worker (wrangler fetched on demand)
+npx wrangler@^4 dev    --config tools/jev-mock/wrangler.toml
+npx wrangler@^4 deploy --config tools/jev-mock/wrangler.toml
+```
+
+Fault injection for the five failure faces: request header
+`x-jev-mock-fault: disconnect | timeout | http500 | rate429 | badschema`.
+Point the extension at it with the `sonecheck.endpoint` setting. The mock **ignores the
+`Authorization` header**, so tests need no real key.
+
+### Real endpoint calibration (optional)
+
+To calibrate against the live service, create a key at
+<https://console.typesafe.ai/keys> and keep it **outside the repository**:
+
+```bash
+mkdir -p ~/.sonecheck && chmod 700 ~/.sonecheck
+printf '%s' 'apikey_…' > ~/.sonecheck/jev-api-key && chmod 600 ~/.sonecheck/jev-api-key
+```
+
+Never commit a key, and never place one in `.dev.vars`, `wrangler.toml` or `.env`.
+
+### Upstream
+
+- TypeSafe documentation: <https://docs.typesafe.ai>
+- HTTP API reference: <https://docs.typesafe.ai/api>
+- Offline snapshot of the full Jev API (endpoint, question types, responses, error
+  codes, model versions, confidence formulas, measured calibration):
+  [`docs/reference/jev-api.md`](https://github.com/rolligen/sonecheck/blob/main/docs/reference/jev-api.md)
+  — read-only; the official docs above stay authoritative.
+
+---
+
 ## Not affiliated
 
 SoneCheck is an independent, unofficial project. It is not affiliated with,
