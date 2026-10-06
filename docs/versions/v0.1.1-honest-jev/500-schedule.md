@@ -19,7 +19,7 @@
 
 | # | ID | 类别 | 环节 | 工作内容 | 难度 | 预估工时 | 验收标准 | 状态 |
 |---|-----|------|------|---------|------|---------|---------|------|
-| 1 | v0.1.1-dev-01 | dev | 开发 | **S0 Scaffold & Clean**：`constants.ts` 增量、`tools/jev-mock/` 骨架、依赖与打包面登记。详见 `400-build` §3.1 | ★★☆☆☆ | 1h | `npm run compile` 零错误；仿真端点可起服并通过健康检查 | ⬜ |
+| 1 | v0.1.1-dev-01 | dev | 开发 | **S0 Scaffold & Clean**：`constants.ts` 增量、`tools/jev-mock/` 骨架、依赖与打包面登记。详见 `400-build` §3.1 | ★★☆☆☆ | 1h | `npm run compile` 零错误；仿真端点可起服并通过健康检查 | ✅ |
 | 2 | v0.1.1-dev-02 | dev | 设计 | **S1 Contract & ADR**：ADR-006/007 核对回填、`03` 三处定案落档、`secrets` 签名冻结。详见 `400-build` §3.2 | ★★☆☆☆ | 1h | `03` 回写完成；契约 lint 零漂移 | ⬜ |
 | 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点五类故障 + T2 契约测试骨架。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 五类故障 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ⬜ |
 | 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：并发 4 复核（注入延迟曲线）、**真实端点复核（条件式：超时 / `noul` 分布 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★☆☆☆ | 1.5h | 翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ⬜ |
