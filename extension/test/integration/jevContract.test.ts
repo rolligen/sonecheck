@@ -1,12 +1,17 @@
+import { execFileSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { JEV_MODEL_ID, REQUEST_TIMEOUT_MS, RETRY_MAX_ATTEMPTS } from '../../src/constants';
-import { createJevClient } from '../../src/infra';
+import { JEV_MODEL_ID, MAX_CONCURRENCY, REQUEST_TIMEOUT_MS, RETRY_MAX_ATTEMPTS } from '../../src/constants';
+import { createRiskEngine, normalizeConfig } from '../../src/core';
+import { createJevClient, readSourceLines, readStagedDiff, resolveRepoRoot } from '../../src/infra';
 import type { DecisionPolicy, DecisionResult, HunkPayload } from '../../src/infra';
 
 /**
@@ -38,6 +43,7 @@ const payload: HunkPayload = {
 interface MockStats {
   total: number;
   byFault: Record<string, number>;
+  inFlight: { current: number; peak: number };
   lastRequest: Record<string, unknown> | null;
 }
 
@@ -218,3 +224,95 @@ function freePort(): Promise<number> {
 }
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Concurrency + end-to-end budget, against a dedicated mock instance.
+ *
+ * A separate instance is deliberate: the shared one accumulates a peak across
+ * every earlier test, and this assertion needs a count nobody else touched. It
+ * is also the only layer where "real concurrency" and "real HTTP" are verified
+ * **together** — T1 proves the engine's fan-out with a stub, T2 proves the
+ * upstream never sees more than `MAX_CONCURRENCY` requests at once.
+ */
+describe('并发与端到端预算（真并发 + 真 HTTP）', () => {
+  const LATENCY_MS = 100;
+  const BLOCKS = 12; // 3 waves at concurrency 4
+  const BUDGET_MS = 1000; // 00 §3 end-to-end p95
+
+  let slowServer: ChildProcess;
+  let slowEndpoint: string;
+  let repo: string;
+
+  beforeAll(async () => {
+    const port = await freePort();
+    slowEndpoint = `http://127.0.0.1:${port}/v1/systemone`;
+    slowServer = spawn(process.execPath, [MOCK_PATH], {
+      env: { ...process.env, PORT: String(port), MOCK_LATENCY_MS: String(LATENCY_MS) },
+      stdio: 'ignore',
+    });
+    await waitForHealth(`http://127.0.0.1:${port}/health`);
+    repo = createRepoWithChanges(BLOCKS);
+  });
+
+  afterAll(() => {
+    slowServer?.kill();
+    if (repo !== undefined) rmSync(repo, { recursive: true, force: true });
+  });
+
+  it(`在飞请求不超过 ${MAX_CONCURRENCY}，且 ${BLOCKS} 块端到端仍在 ${BUDGET_MS}ms 预算内`, async () => {
+    const engine = createRiskEngine({
+      resolveRepoRoot,
+      readStagedDiff,
+      readSourceLines,
+      hasApiKey: async () => true,
+      createClient: (clientPolicy) =>
+        createJevClient({ endpoint: slowEndpoint, getApiKey: async () => KEY, policy: clientPolicy }),
+    });
+
+    const started = Date.now();
+    const report = await engine.inspect(normalizeConfig({ maxItems: 20 }), repo);
+    const elapsed = Date.now() - started;
+
+    const base = slowEndpoint.replace('/v1/systemone', '');
+    const observed = (await (await fetch(`${base}/stats`)).json()) as MockStats;
+
+    expect(report.items).toHaveLength(BLOCKS);
+    expect(report.degraded).toEqual([]);
+    // 上游侧观测：并发确实发生了，且从未超过上限
+    expect(observed.inFlight.peak).toBeGreaterThan(1);
+    expect(observed.inFlight.peak).toBeLessThanOrEqual(MAX_CONCURRENCY);
+    // 3 波 × 100ms ≈ 300ms；顺序调用会是 12 × 100 = 1200ms（超预算）
+    expect(elapsed).toBeLessThan(BUDGET_MS);
+  });
+});
+
+/** A temp git repo with `count` staged single-line changes. */
+function createRepoWithChanges(count: number): string {
+  const dir = mkdtempSync(join(tmpdir(), 'sonecheck-t2-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'SoneCheck T2'], { cwd: dir });
+  mkdirSync(join(dir, 'src', 'util'), { recursive: true });
+  for (let index = 0; index < count; index += 1) {
+    writeFileSync(join(dir, 'src', 'util', `mod${index}.ts`), `export const v${index} = ${index};\n`);
+  }
+  execFileSync('git', ['add', '.'], { cwd: dir });
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
+  for (let index = 0; index < count; index += 1) {
+    writeFileSync(join(dir, 'src', 'util', `mod${index}.ts`), `export const v${index} = ${index + 1};\n`);
+  }
+  execFileSync('git', ['add', '.'], { cwd: dir });
+  return dir;
+}
+
+async function waitForHealth(healthUrl: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      if ((await fetch(healthUrl)).ok) return;
+    } catch {
+      // not listening yet
+    }
+    await delay(100);
+  }
+  throw new Error(`mock endpoint did not come up at ${healthUrl}`);
+}
