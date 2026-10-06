@@ -9,7 +9,7 @@
 ## 1. 架构背景与目标
 
 - **架构目标**：把 `infra/jevClient` 从本地 mock 换成真实 HTTP 客户端（超时 / 重试 / 错误归一 / 并发），并为「未配置 Key」建立宽限跳过路径——`02` §2 对 `infra/jevClient` 的职责定义（「超时、重试、错误归一的唯一归属处」）首次完全兑现。
-- **上一版本基线**：`v0.1.0` 已交付三层 TS 工程 + mock 判定链路（T1 51 例 / 5 守卫 / 契约 lint 全绿，tag `v0.1.0`）。`02` §3 的「异步 HTTP + 并发上限 4」与 `02` §4 的并发模型尚未落地。
+- **上一版本基线**：`v0.1.0` 已交付三层 TS 工程 + mock 判定链路（T1 51 例 / 5 守卫 / 契约 lint 全绿，tag `v0.1.0`）。`02` §3 的「异步 HTTP + 并发上限 4」与 `02` §4 的并发模型尚未落地。**本版 S2 后的现状**：T1 **75 例 / 9 文件**、T2 **11 例**（首次落地）、真实 HTTP 客户端已就位。
 - **外部约束**：Jev 注册暂停（2026-09-22）——按 `ADR-007`，本版验收与实测对 `tools/jev-mock/` 契约仿真端点执行，`sonecheck.endpoint` 可配置。
 - **影响范围**：`extension/src/**`（3 个文件重写 / 4 个文件增量）、新增 `tools/jev-mock/`（不进产物）；`docs/03`（超时/重试定案、endpoint、`ERR-08` 语义）、`docs/04`（状态表）、`docs/05` §2.2（范围重写）。
 
@@ -53,11 +53,26 @@
 | 步骤 | 发起方 | 接收方 | 数据 |
 |---|---|---|---|
 | 1–7 | （同 `v0.1.0`：命令 → 配置归一 → git → diffParser → contextBuilder） | — | — |
-| 8 | `core/riskEngine` | `infra/secrets` | 查询 Key 可读性；未配置 → 宽限短路（宽限结果直达步骤 11） |
+| 8 | `core/riskEngine` | `infra/secrets` | 查询 Key 可读性；未配置 → 宽限短路（`skipped: 'NO_KEY'`，直达步骤 11） |
 | 9 | `core/riskEngine` | `infra/jevClient` | payload 数组，**并发上限 4** 的批量 `decide`（`02` §4 并发模型） |
-| 10 | `core/riskEngine` | `core/threshold` | `DecisionResult[]`（`failure` 块已剔除）→ `RiskItem[]` |
-| 11 | `ui/commands` | `ui/status` | 清单、All Clear、或**降级聚合提示**（一次性，含 `ERR-*` 归因） |
+| 10 | `core/riskEngine` | `core/threshold` | `DecisionResult[]`（`failure` 块剔除并按 `ERR-*` 归并计数）→ `RiskItem[]` |
+| 11 | `core/riskEngine` → `ui/commands` | `ui/status` / `ui/riskList` | **`InspectionReport`**：清单 / All Clear / 宽限引导 / 降级聚合提示 |
 | 12 | `ui/riskList` | VS Code 编辑器 | （同 `v0.1.0`） |
+
+**检查报告（`InspectionReport`）**
+
+`v0.1.0` 的 `inspect()` 返回 `RiskItem[]`，无法回答「为什么清单是空的」——是全低风险、全部降级、还是因未配 Key 而宽限跳过。`v0.1.1` 因此把出口从数组改为报告对象，让 `core` 承担归因、`ui` 只做呈现（`02` §2「ui 只按已归一结果提示」）：
+
+```ts
+interface InspectionReport {
+  items: RiskItem[];                              // 已过滤 / 排序 / 截断
+  degraded: { code: JevFailureCode; count: number }[];  // 降级归因（ERR-* → 块数）
+  skipped: 'NO_KEY' | null;                       // 宽限跳过的唯一原因
+}
+```
+
+- 不变量：`items.length === 0` 时，`degraded` 非空或 `skipped` 非空——**空清单永远有可解释的原因**（US-03 零打扰的前提是可解释，而非静默）。
+- 报告是**纯数据**：`ui` 不从 `items` 反推失败原因，也不自己统计块数。
 
 **状态跃迁**（`02` §4 补全 `Degraded` 分支）
 
@@ -143,7 +158,7 @@
 
 | 关注点 | 测试级别 | 关键场景 | 环境依赖 |
 |---|---|---|---|
-| （T1 基线）diff 解析 / 上下文 / 打分 fixture / 过滤 / 归一 | T1 单元 | 沿用 `v0.1.0` 51 例基线（棘轮，只增不删） | 纯 Node |
+| （T1 基线）diff 解析 / 上下文 / 打分 fixture / 过滤 / 归一 / **wire 组装与失败归一** | T1 单元 | 沿用 `v0.1.0` 51 例基线并已棘轮至 **75 例 / 9 文件**（S2：mock 打分移入 fixture，新增 wire、状态码映射、重试、Key 不泄漏） | 纯 Node |
 | endpoint 归一 | T1 单元 | 空 / 非 https / 合法 URL → 回退或采纳 | 纯 Node |
 | 并发编排 | T1 单元 | 在飞 ≤4 / 结果按提交顺序聚合 / 全失败返回空清单 | 纯 Node（内存 stub 计数） |
 | Key 生命周期 | T1 单元 | 取消无副作用 / 空串二次确认 / `secrets` 外无明文（`GUARD-06` 同源断言） | 纯 Node（SecretStorage stub） |
@@ -155,7 +170,7 @@
 
 > **层级口径**：沿用 `01` §3。本版**首次引入 T2**——判定越过进程边界（HTTP），跨进程契约必须有可执行断言；MSW 不启用（`ADR-007`），T2 直连仿真端点。T1 不得 mock 网络层（红线不变）。
 
-**测试基线（棘轮，只升不降）**：`v0.1.0` 收口 T1 = 51 例 / 8 文件——本版不得删除或降断言；T2 为新增域（目标 ≥8 例）；T3 = 真机 8 场景（`200-spec` §2）。删除或跳过用例须在 `400-build` §2 对应 Step 标注理由。
+**测试基线（棘轮，只升不降）**：`v0.1.0` 收口 T1 = 51 例 / 8 文件；**S2 后 T1 = 75 例 / 9 文件、T2 = 11 例**（下同）。本版不得删除或降断言；T3 = 真机 8 场景（`200-spec` §2）。删除或跳过用例须在 `400-build` §2 对应 Step 标注理由。
 
 - **测试目录**：T1 在 `test/`（`GUARD-03` 不扫，沿用）；T2 在 `test/integration/`（起 `wrangler dev` 子进程或复用已部署端点，经 `sonecheck.endpoint` 注入）。
 - **不写单测的部分**：`ui/**` 原生控件交互（通知按钮、输入框）以 T3 真机验证替代——依据见 `01` §3。

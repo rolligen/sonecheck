@@ -42,7 +42,7 @@
 | `src/ui/commands.ts` | 命令编排：读取配置 → 调 core → 分发结果给展示层 | `registerCommands()` | 私有 |
 | `src/ui/riskList.ts` | QuickPick 风险清单 + 条目跳转定位 | `showRiskList()` | 私有 |
 | `src/ui/status.ts` | 状态栏与一次性提示（All Clear / 降级提示） | `reportStatus()` | 私有 |
-| `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K | `inspect()` | 私有 |
+| `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K，并产出**检查报告**（清单 + 降级归因 + 宽限标记） | `inspect()` | 私有 |
 | `src/core/contextBuilder.ts` | 为每个 hunk 补上下文行，控制 payload ≤ 2KB | `buildContext()` | 私有 |
 | `src/core/threshold.ts` | 阈值判定与排序（RISK_THRESHOLD 常量，禁魔数） | `filterRisky()` | 私有 |
 | `src/core/config.ts` | 配置模型与校验：校验阈值范围、归一默认值（纯逻辑，**不接触 VS Code API**） | `normalizeConfig()` | 私有 |
@@ -50,7 +50,7 @@
 | `src/infra/git.ts` | 取工作区根、执行 `git diff --staged`（含本地失败分类：`ERR-06` / `ERR-09`） | `resolveRepoRoot()` / `readStagedDiff()` | 私有 |
 | `src/infra/sourceReader.ts` | 只读读取工作区源文件行（供上下文截断；文件缺失返回空数组） | `readSourceLines()` | 私有 |
 | `src/infra/diffParser.ts` | diff 文本 → hunk 数组（文件、起始行、变更类型、内容；超长 hunk 按 payload 上限切分） | `parseDiff()` | 私有 |
-| `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `IJevClient` / `decide()` | 私有 |
+| `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `createJevClient()` / `IJevClient` / `decide()` / `buildJevRequest()` / `classifyHttpFailure()` | 私有 |
 | `src/infra/secrets.ts` | API Key 读写的**唯一出口**（VS Code SecretStorage；`INV-03`） | `hasApiKey()` / `getApiKey()` / `setApiKey()` / `clearApiKey()` | 私有 |
 | `src/infra/logger.ts` | `observe()` 包装器 + Output Channel 输出 | `observe()` / `log(event)` | 私有 |
 

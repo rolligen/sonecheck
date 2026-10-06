@@ -22,10 +22,10 @@
 | 1 | v0.1.1-dev-01 | dev | 开发 | **S0 Scaffold & Clean**：`constants.ts` 增量、`tools/jev-mock/` 骨架、依赖与打包面登记。详见 `400-build` §3.1 | ★★☆☆☆ | 1h | `npm run compile` 零错误；仿真端点可起服并通过健康检查 | ✅ |
 | 2 | v0.1.1-dev-02 | dev | 设计 | **S1 Contract & ADR**：ADR-006/007 核对回填、`03` 失败面按上游实测补 `400`/`403` 归类、**`model` 固定为 `jev-1.13.0`**、冻结 `secrets` 四签名、**契约仿真端点按实测收紧 + 补鉴权/529 注入**。详见 `400-build` §3.2 | ★★★☆☆ | 1.5h | `03` 纯增量回写完成；无 `jev-latest` 残留；签名与 `02` §2 逐字一致；mock 对上游实测口径逐项对齐且不宽松；契约 lint 零漂移 | ✅ |
 | 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点注入面复核 + T2 契约测试骨架（故障全谱 8 个状态码）。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 故障全谱 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ✅ |
-| 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：并发 4 复核（注入延迟曲线）、**真实端点复核（条件式：超时 / `noul` 分布 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★☆☆☆ | 1.5h | 翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ⬜ |
-| 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、并发编排与 `failure` 剔除、`setApiKey` 命令。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过 | ⬜ |
+| 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：新增 `harness/calibrate.ts` 校准工具（`--latency` 耗时曲线 / `--live` 真实端点）、并发 4 复核、**真实端点复核（条件式：超时 / `noul` 分布与阈值复核 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★★☆☆ | 1.5h | 两条校准数据均留痕；翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ⬜ |
+| 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ⬜ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ⬜ |
-| 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫 + T1（≥51 例）+ T2 全量 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿 | ⬜ |
+| 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫 + T1（≥75 例 / 9 文件）+ T2 补并发峰值断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ⬜ |
 | 8 | v0.1.1-dev-08 | dev | 发布 | **S7 Verification & Close**：真机八项验收（对仿真端点）、`.vsix`、合并保留历史 + tag `v0.1.1`、Issue 收口。详见 `400-build` §3.8 | ★★☆☆☆ | 1h | `200-spec` §2 八项验收全过；tag 已推送；上架与真机校准 `[DEFERRED]` 已登记 | ⬜ |
 
 > 状态：⬜ 待开始 / 🔄 进行中 / ✅ 已完成 / ❌ 已取消

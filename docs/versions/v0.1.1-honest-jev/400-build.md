@@ -21,6 +21,7 @@
 | `JevResponse` | `model` / `answers` / `usage` | `API-01` 响应体；schema 校验失败 → `ERR-05` |
 | `DecisionResult` | `score` / `decision` / `reasonCode` / **`failure?`** | **纯增量**可选 `failure`（`ERR-01`~`ERR-05`）；wire 契约不变（`300-design` §4.4） |
 | `ScoredHunk` / `RiskItem` | （同 `v0.1.0`） | — |
+| `InspectionReport` | `items` / `degraded` / `skipped` | **检查报告**（`v0.1.1` 新增）：`items: RiskItem[]` · `degraded: { code, count }[]` · `skipped: 'NO_KEY' \| null`。不变量：`items` 为空时 `degraded` 或 `skipped` 必非空——**空清单永远有可解释原因** |
 | `SoneCheckConfig.endpoint` | — | 默认 `JEV_ENDPOINT_DEFAULT`（`constants.ts`）；空 / 非 https 归一回退 |
 
 ### 1.2 API 契约
@@ -29,12 +30,20 @@
 
 - **调用顺序**：`ui/commands` → `infra/secrets`(可读性) → `core/config.normalize` → `core/riskEngine.inspect` → `infra/git` → `infra/diffParser` → `core/contextBuilder` → **并发 `infra/jevClient.decide`（≤4）** → `core/threshold` → `ui/riskList` / `ui/status`
 - **前置条件**：
-  - Key 未配置 → 检查**不进入** `inspect()`（宽限短路，`ADR-006`），不视为失败
+  - Key 未配置 → 检查**不进入**判定（宽限短路，`ADR-006`），不视为失败
   - `decide()` 前置条件同 `v0.1.0`（payload 序列化总长 ≤ 2048 字节，`INV-02`）
   - endpoint 必须已归一（空 / 非 https 回退默认）
 - **返回值约定**：
   - `decide()` **恒 resolve**：成功返回 `DecisionResult`；失败返回含 `failure` 的降级结果——**不 reject、不抛未分类异常**（`INV-04` / `300-design` §4.4）
-  - `inspect()` 恒返回 `RiskItem[]`（`failure` 块不入清单）；本地失败仍以分类失败（`ERR-06/07/09`）抛出
+  - `inspect()` 恒返回 **`InspectionReport`**（`v0.1.1` 起；`v0.1.0` 的 `RiskItem[]` 无法承载降级与宽限元信息）：
+
+    | 字段 | 类型 | 说明 |
+    |---|---|---|
+    | `items` | `RiskItem[]` | 清单条目（已过滤、已排序、已截断 Top-K）；`failure` 块不入清单 |
+    | `degraded` | `{ code: JevFailureCode; count: number }[]` | 降级归因聚合（按 `ERR-*` 归并计数），供一次性提示使用 |
+    | `skipped` | `'NO_KEY' \| null` | 非空表示因未配置 Key 而**宽限跳过**（`ADR-006`），此时 `items` 必为空 |
+
+  - 本地失败仍以分类失败（`ERR-06/07/09`）抛出，`InspectionReport` 不含该类信息
 - **新增命令**：`sonecheck.setApiKey`（`API-03`）——幂等（最后写入为准）、取消无副作用、空串二次确认清除、任何路径不回显明文（`INV-03`）
 
 ### 1.3 异常与边界
@@ -77,7 +86,7 @@
 | S3 | Standard Finalization | 执行 | 开发 | GUARD-03 | 并发上限 4 实测复核（仿真端点注入延迟场景）；`sonecheck.endpoint` 回写 `03` §3；翻牌第一批（`ERR-01`~`ERR-05` / `API-01` 真实链路 / `INV-04`，以 T2 证据为准） |
 | S4 | Ingress Migration | 执行 | 开发 | GUARD-01,02,06 | `secrets.ts` 落地；`configSource` / `config` 增 `endpoint`；`riskEngine` 并发编排与 `failure` 剔除；`setApiKey` 命令注册 |
 | S5 | Egress Migration | 执行 | 开发 | GUARD-05 | 宽限短路（一次性引导 + 状态栏瞬时态）；降级聚合提示；清单零变更复核（`04` §2 状态表对齐） |
-| S6 | Guards & Tests | 执行 | 测试 | GUARD-01,02,03,04,05,06 | 6 条守卫全绿 + T1 基线（≥51 例）不降 + T2 全绿 + 契约结构 lint 全绿；`grep console.log src/` 须无输出 |
+| S6 | Guards & Tests | 执行 | 测试 | GUARD-01,02,03,04,05,06 | 6 条守卫全绿 + **T1 ≥75 例 / 9 文件、T2 ≥11 例**（S2 后基线，只增不降）+ 契约结构 lint 全绿；`grep console.log src/` 须无输出 |
 | S7 | Verification & Close | 执行 | 发布 | — | 真机八项验收（对仿真端点）、`.vsix` 打包、合并保留历史 + tag `v0.1.1`、Issue 收口；Marketplace 上架 `[DEFERRED]`（待 `VSCE_PAT`） |
 
 > **粒度自检（硬判据）**：S4 / S5 **各只出现一次** ✅
@@ -177,10 +186,11 @@ async function decide(payload: HunkPayload): Promise<DecisionResult>
 
 - **目标**：本版无待实测回填的判定阈值（`riskThreshold` 等沿用 `v0.1.0` 定案）；本步完成**并发上限复核**、`endpoint` 契约回写与第一批翻牌。
 - **步骤拆解**：
-  1. 用仿真端点注入 50/100/200ms 延迟，复核 `MAX_CONCURRENCY = 4` 下 ≥10 块的端到端耗时曲线（记录进 `500-schedule` 执行记录；并发值不做调整，4 为 `02` §4 既定设计）
-  2. **真实端点复核（条件式，不阻塞收口）**：若本机已配 Jev Key（约定位置 `~/.sonecheck/jev-api-key`，**严禁进入仓库任何文件**），用 S2 harness 的真实 hunk 样本打真实端点，三件事：① 复核 `REQUEST_TIMEOUT_MS = 500` 在稳态延迟下不误触发 `ERR-02`；② 观察真实 `noul` 分布并复核 `RISK_THRESHOLD`（其现值 `0.4` 系 mock 分布所定，真身分布可能偏移）；③ 比对真实响应字段与仿真端点 schema 是否漂移。结果写进 `500-schedule` 执行记录与 `03` 注记；数值变化只动 `constants.ts`（`ADR-007` 预案）。**无 Key 则本步显式跳过，版本门禁仍以仿真端点为准**
-  3. `03` §3 `sonecheck.endpoint` 行核对（随 ADR-007 开工前已回写，本步仅核对）
-  4. 翻牌第一批：`ERR-01`~`ERR-05` / `API-01`（真实链路）/ `INV-04` → `[CURRENT]`（以 T2 全绿为证据）；`ERR-08` / `ERR-10` / `ERR-11` / `API-03` 留待 S5/S6 证据
+  1. 新增 `harness/calibrate.ts`（一次性测量工具，不进产物，`.vscodeignore` 已排除 `harness/`）双模式：① `--latency <ms>`——对仿真端点（`MOCK_LATENCY_MS`）跑 ≥10 块，输出并发 4 下的端到端耗时曲线；② `--live`——读 `~/.sonecheck/jev-api-key`（**严禁进入仓库任何文件**）对真实端点跑 `v0.1.0` 遗留的 `harness/measure.ts` 所产真实 hunk 样本，输出真实 `noul` 分布与耗时分布。样本来源：`harness/measure.ts`（`v0.1.0` 遗留，本版只复用其样本采集，不复用其 mock 打分）
+  2. 用步骤 1 的 `--latency 50 / 100 / 200` 复核 `MAX_CONCURRENCY = 4` 下的耗时曲线（记录进 `500-schedule` 执行记录；并发值不做调整，4 为 `02` §4 既定设计）
+  3. **真实端点复核（条件式，不阻塞收口）**：若本机已配 Jev Key，用步骤 1 的 `--live` 三件事：① 复核 `REQUEST_TIMEOUT_MS = 500` 在稳态延迟下不误触发 `ERR-02`；② 用真实 `noul` 分布复核 `RISK_THRESHOLD`（现值 `0.4` 系 mock 分布所定）——**偏移超出容差则改 `RISK_THRESHOLD` + `CFG-01` 默认值并记录依据**；③ 比对真实响应字段与仿真端点 schema 是否漂移。结果写进 `500-schedule` 执行记录与 `03` 注记；数值变化只动 `constants.ts`（`ADR-007` 预案）。**无 Key 则本步显式跳过，版本门禁仍以仿真端点为准**
+  4. `03` §3 `sonecheck.endpoint` 行核对（随 ADR-007 开工前已回写，本步仅核对）
+  5. 翻牌第一批：`ERR-01`~`ERR-05` / `API-01`（真实链路）/ `INV-04` → `[CURRENT]`（以 T2 全绿为证据）；`ERR-08` / `ERR-10` / `ERR-11` / `API-03` 留待 S5/S6 证据
 - **异常与边界**：仿真端点延迟无法模拟真实公网长尾——以 `ADR-007` 的「真机校准待 Key」注记兜底，不在本版强定
 
 ### 3.5 S4 Ingress Migration
@@ -189,14 +199,17 @@ async function decide(payload: HunkPayload): Promise<DecisionResult>
 - **步骤拆解**：
   1. `src/infra/secrets.ts` 实现（S1 签名落地）；`src/extension.ts` 装配层把 `context.secrets` 注入 `secrets` 模块
   2. `src/infra/configSource.ts` 增读 `sonecheck.endpoint`；`src/core/config.ts` 归一（空 / 非 https → `JEV_ENDPOINT_DEFAULT`）
-  3. `src/core/riskEngine.ts`：semaphore（≤4）批量 `decide`、结果按提交顺序聚合、`failure` 块剔除并收集归因集合；`inspect()` 前置 Key 可读性查询 → 未配置抛宽限信号（非分类失败，新内部信号 `NO_KEY`，由 `ui` 转宽限提示）
-  4. `src/ui/commands.ts`：注册 `sonecheck.setApiKey`（输入框 `password: true`、取消无副作用、空串二次确认清除）；`inspectDiff` 接宽限信号
+  3. `src/core/riskEngine.ts`：semaphore（≤4）批量 `decide`、结果按提交顺序聚合、`failure` 块剔除并**按 `ERR-*` 归并计数**；`inspect()` 前置 Key 可读性查询 → 未配置时返回 `{ items: [], degraded: [], skipped: 'NO_KEY' }`（**不抛异常**：宽限不是失败，`ADR-006`）
+  4. `src/ui/commands.ts`：注册 `sonecheck.setApiKey`（输入框 `password: true`、取消无副作用、空串二次确认清除）；`inspectDiff` 读 `report.skipped` / `report.degraded`
   5. `package.json` `contributes.commands` 增 `sonecheck.setApiKey`（title 与 `04` §1 一致）
+  6. `src/extension.ts` 装配层把 S2 的**占位依赖换成真实依赖**：`endpoint` 来自归一后的 `sonecheck.endpoint`，`getApiKey` 接 `infra/secrets`
 - **函数签名与伪代码**：
 
 ```text
-async function inspect(config, rootDir): Promise<RiskItem[]>   // failure 块不入清单
-// 内部: keyReadable? -> no: 抛宽限信号; yes: 并发 decide(≤4) -> threshold.filterRisky
+async function inspect(config, rootDir): Promise<InspectionReport>
+// 内部: hasApiKey? -> no: { items: [], degraded: [], skipped: 'NO_KEY' }
+//                     yes: 并发 decide(≤4) -> 剔除 failure 并归并 -> threshold.filterRisky
+//                           -> { items, degraded, skipped: null }
 async function setApiKeyFlow(): Promise<void>                  // API-03 全流程（ERR-10/11 归属此处）
 ```
 
@@ -208,7 +221,9 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 |------|------|------------------------|
 | `normalizeConfig` | endpoint 非 https | given `endpoint = 'http://x'` → when 归一 → then 回退默认且不抛错 |
 | `inspect` | 并发上限 | given 20 个 payload + stub 每请求 50ms → when inspect → then 在飞峰值 ≤ 4 且总耗时 ≈ 250ms（非 1000ms） |
-| `inspect` | 部分失败 | given 3/13 块 `failure: 'ERR-03'` → when inspect → then 返回 10 条有效清单 + 聚合信号含 `ERR-03` |
+| `inspect` | 部分失败 | given 3/13 块 `failure: 'ERR-03'` → when inspect → then `items` 10 条且 `degraded` 含 `{ code: 'ERR-03', count: 3 }` |
+| `inspect` | 全部失败 | given 全部块 `failure` → when inspect → then `items` 为空、`degraded` 非空（空清单有可解释原因） |
+| `inspect` | 未配置 Key | given `hasApiKey()` 为 false → when inspect → then 返回 `skipped: 'NO_KEY'` 且**不抛异常**、不发任何请求 |
 | `setApiKeyFlow` | 取消 | given 用户 Esc → when 流程结束 → then 原值不变、无提示残留 |
 
 ### 3.6 S5 Egress Migration
@@ -216,9 +231,9 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 - **目标**：宽限引导与降级聚合的输出侧呈现，清单链路零回归。
 - **步骤拆解**：
   1. `src/ui/status.ts`：增「未配置 Key」瞬时态（`SoneCheck: 未配置 Key`，2s）；一次性引导通知（`showInformationMessage(msg, '设置 Key')` → `executeCommand('sonecheck.setApiKey')`；**每会话至多一次**，以模块级会话标记实现，不持久化）
-  2. `src/ui/commands.ts`：降级聚合提示——存在 `failure` 块时，清单照常弹出（有效结果优先），关闭清单后给一次性提示（含归因码，如 `SoneCheck: 已跳过 N 块（服务超时）`）；全部失败 → 不弹清单，仅提示
+  2. `src/ui/commands.ts`：按 `InspectionReport` 分发——`skipped === 'NO_KEY'` → 宽限分支（首次引导 / 仅状态栏）；`items` 非空 → 清单照常弹出（**有效结果优先**），`degraded` 非空则在关闭清单后给一次性聚合提示（如 `SoneCheck: 已跳过 N 块（服务超时）`）；`items` 空且 `degraded` 非空 → 不弹清单，仅聚合提示
   3. `04` §2 状态表对齐复核（错误 / 降级 / 未配 Key 三态文案 SSOT）
-- **输入输出与前置条件**：前置 S4 的宽限信号与聚合信号；后置 `200-spec` §2 前 4 项可真机走通
+- **输入输出与前置条件**：前置 S4 的 `InspectionReport`；后置 `200-spec` §2 前 4 项可真机走通
 - **异常与边界**：引导通知只出现一次的粒度是「扩展会话」（重载窗口后允许再引导一次）——避免持久化状态与隐私问题
 
 #### 关键行为契约
@@ -231,11 +246,11 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 
 ### 3.7 S6 Guards & Tests
 
-- **目标**：6 条守卫全绿、T1 基线不降、T2 全绿、契约 lint 全绿；本版仍无运行期日志（`grep -rn "console.log" src/` 须无输出）。
+- **目标**：6 条守卫全绿、T1 与 T2 基线不降、契约 lint 全绿；本版仍无运行期日志（`grep -rn "console.log" src/` 须无输出）。
 - **步骤拆解**：
-  1. `guard:06`（Key 泄漏）落盘并入聚合 `guard`；`GUARD-03` 模式增补 `400` / `150` 字面量
-  2. `test:integration` 填充（S2 骨架 → 全量：`ERR-01`~`05` 故障全谱，含 401 / 403 / 429 / 529 四个状态码 + 超时 / 重试计数 / Key 泄漏 / 并发峰值）；`npm run test` 聚合 = `test:unit && test:integration`
-  3. T1 基线核对：≥51 例 / 8 文件，逐用例比对 `v0.1.0` 清单（删除或跳过须在 §2 标注理由）
+  1. `guard:06`（Key 泄漏）落盘并入聚合 `guard`；`GUARD-03` 模式增补 `400` / `500` / `150` 字面量
+  2. **T2 补齐剩余断言**（S2 已落地 11 例：正常路径 / 契约形态 / Key 不入载荷 / `ERR-01`~`05` 降级全谱 / 重试次数 / 超时）：本步只补**并发峰值**（在飞 ≤ 4，来自 S4 的 semaphore）与 S3 的真实端点复核结论留痕；`npm run test` 聚合 = `test:unit && test:integration`（S2 已配好）
+  3. 两层基线核对：T1 **≥75 例 / 9 文件**、T2 **≥11 例**（S2 后棘轮值），逐用例比对；删除或跳过须在 §2 标注理由
   4. 契约结构 lint（无条件必跑）：`python3 ~/dev/dev-meta/samples/contract-lint/contract_lint.py --root . --contract-file docs/03_CONTRACTS_AND_API.md`
 - **后置条件**：`npm run guard`、`npm run test:unit`、`npm run test:integration`、契约 lint 均退出码 0
 
@@ -293,6 +308,6 @@ stateDiagram-v2
 - **S3**：并发复核数据已记录；第一批翻牌完成（以 T2 证据为准）
 - **S4**：`GUARD-01/02/06` 全绿；`setApiKey` 全流程（写入 / 取消 / 清除）真机可用
 - **S5**：宽限两态与降级聚合真机可用；`GUARD-05` 全绿
-- **S6**：6 条守卫 + T1（≥51 例）+ T2 + 契约 lint 全绿；无 `console.log`
+- **S6**：6 条守卫 + T1（≥75 例 / 9 文件）+ T2（≥11 例，含并发峰值）+ 契约 lint 全绿；无 `console.log`
 - **S7**：`200-spec` §2 八项真机验收全过；`.vsix` 产出；`v0.1.1` annotated tag 已推送（上架 `[DEFERRED]` 待 `VSCE_PAT`）
 - **顺序说明**：S2 必须先行（T2 证据是 S3 翻牌前提）；S4 先于 S5（宽限信号与聚合信号由 S4 产出）
