@@ -24,6 +24,12 @@ npx wrangler@^4 deploy --config tools/jev-mock/wrangler.toml
 
 健康检查：`curl http://127.0.0.1:8787/health`
 
+请求计数（T2 断言重试次数的唯一可观测点，读增量、无 reset）：
+`curl http://127.0.0.1:8787/stats` → `{ total, byFault, lastRequest }`
+
+> `lastRequest` 只记录**请求体**，绝不记录 header——这样 T2 可以断言「客户端没把
+> Key 放进载荷」（`INV-03`），而 mock 自身不成为泄密面。
+
 ## 故障注入
 
 请求头 `x-jev-mock-fault: <值>`，逐一对应 `03` §2.1 的失败面：

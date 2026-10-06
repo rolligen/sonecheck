@@ -50,6 +50,20 @@ const FAULT_STATUS = {
 const TIMEOUT_HOLD_MS = 3000;
 
 /**
+ * 请求计数（`GET /stats`）。T2 需要断言「恰好重试一次」这类行为，而重试次数只能
+ * 从上游侧观察；测试读取**增量**，故不提供 reset。
+ */
+const requestCounts = { total: 0, byFault: {} };
+
+/**
+ * 最近一次请求体（`GET /stats` 的 `lastRequest`）。
+ *
+ * **只记录 body，绝不记录 header**——这样 T2 可以断言「客户端没有把 Key 放进
+ * 载荷」（`INV-03`），而 mock 自身也不会成为泄密面。
+ */
+let lastRequest = null;
+
+/**
  * 正常路径的**确定性占位值**。
  *
  * T2 断言的是「wire 形态与错误归一」，**不断言模型判定分布**——真实分布由 S3 的真实端点
@@ -88,6 +102,11 @@ export function createHandler({ latencyMs = 0 } = {}) {
       });
     }
 
+    // 请求计数：供 T2 断言重试次数（只读，读增量）。
+    if (request.method === 'GET' && url.pathname === '/stats') {
+      return json({ ...requestCounts, lastRequest, faults: SUPPORTED_FAULTS });
+    }
+
     if (url.pathname !== '/v1/systemone') return json({ error: 'not_found' }, 404);
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
@@ -95,6 +114,10 @@ export function createHandler({ latencyMs = 0 } = {}) {
     if (fault !== null && !SUPPORTED_FAULTS.includes(fault)) {
       return json({ error: 'unsupported_fault', fault }, 400);
     }
+
+    requestCounts.total += 1;
+    const faultKey = fault ?? 'none';
+    requestCounts.byFault[faultKey] = (requestCounts.byFault[faultKey] ?? 0) + 1;
 
     if (latencyMs > 0) await sleep(latencyMs);
 
@@ -135,7 +158,9 @@ function mockMessage(fault) {
 
 async function readRequestBody(request) {
   try {
-    return { body: await request.json() };
+    const body = await request.json();
+    lastRequest = body;
+    return { body };
   } catch {
     return { invalid: 'malformed_json' };
   }
