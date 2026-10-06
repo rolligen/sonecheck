@@ -2,7 +2,7 @@
   "name": "sonecheck",
   "displayName": "SoneCheck",
   "description": "Sub-second System-1 AI code risk inspector for VS Code and Git hooks. Local MVP: scores your staged diff and surfaces the few hunks worth a human look.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "rolligen",
   "license": "MIT",
   "engines": {

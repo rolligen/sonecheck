@@ -8,19 +8,28 @@ deserve your eyes before you commit.
 
 ---
 
-## Status: `0.1.0` is the local MVP
+## Status: `0.1.1` talks to a real decision service
 
-`0.1.0` runs the full local chain: read the staged diff → split it into hunks →
-score each hunk → list the risky ones → jump to the code.
+`0.1.1` keeps the whole local chain and replaces the mock with a real HTTP client:
+read the staged diff → split it into hunks → **ask a System-1 model** → list the risky
+ones → jump to the code.
 
-The decision service is a **local mock** in this release: no network request is
-made, no API key is involved, and there is no degradation branch because there is
-no network to fail. The real HTTP client, the failure paths and the API-key
-command arrive in `0.1.1`.
+**You bring your own key.** Create one at
+<https://console.typesafe.ai/keys>, then run **`SoneCheck: Set Jev API Key`** once
+(we store it in VS Code SecretStorage, never in your settings or workspace).
+Without a key the check is *skipped* — not failed, and nothing is blocked.
+
+Failures are part of the design: if the service is unreachable, times out, is rate
+limited or answers with something malformed, the affected hunks are reported as
+skipped with the reason, the rest of the list still shows, and your commit is never
+blocked.
+
+Self-hosting or a gateway? Point `sonecheck.endpoint` at it (https, or plain http
+on loopback).
 
 ## Install
 
-1. Download `sonecheck-0.1.0.vsix` from
+1. Download `sonecheck-0.1.1.vsix` from
    [Releases](https://github.com/rolligen/sonecheck/releases), or take the
    Marketplace listing once it is published.
 2. In VS Code: **Extensions → … → Install from VSIX…**
@@ -41,15 +50,23 @@ Settings (`sonecheck.*`):
 | `maxItems` | `3` | Maximum number of hunks listed (Top-K) |
 | `enabled` | `true` | Global switch |
 | `sensitivePathPatterns` | `auth`, `payment`, `migration` | Path substrings treated as sensitive |
+| `endpoint` | `https://api.typesafe.ai/v1/systemone` | Decision service endpoint; https, or http on loopback only |
+
+## What leaves your machine
+
+- Per hunk: the changed lines plus **≤ 2 KB** of surrounding context, the file
+  path and the change type — sent as one request per hunk to the configured
+  endpoint.
+- **Never a whole file**, never unchanged files, never your key: the key only ever
+  travels in the `Authorization` header of that request.
+- **No telemetry** of any kind.
 
 ## What it never does
 
 - **never blocks a commit** — a failed check ends in a single prompt and passes through;
-- **never uploads a whole file** — only diff hunks plus bounded local context (≤ 2 KB per hunks);
+- **never uploads a whole file** — only diff hunks plus bounded local context (≤ 2 KB per hunk);
 - **never touches your workspace** — the check is strictly read-only;
 - **never nags** — an all-clear produces no popup, only a transient status line.
-
-No API key, no source file and no telemetry leaves your machine in this release.
 
 ---
 
