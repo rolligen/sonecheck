@@ -24,7 +24,7 @@
 | 3 | v0.1.1-dev-03 | dev | 开发 | **S2 Real Client & Mock Worker**：真实 `jevClient`（组装/超时/重试/归一/failure）+ 仿真端点注入面复核 + T2 契约测试骨架（故障全谱 8 个状态码）。详见 `400-build` §3.3 | ★★★★☆ | 3h | T2 故障全谱 + 超时 + 重试 + Key 泄漏断言全绿；T1 基线不降 | ✅ |
 | 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：新增 `harness/calibrate.ts` 校准工具（`--latency` 耗时曲线 / `--live` 真实端点）、并发 4 复核、**真实端点复核（条件式：超时 / `noul` 分布与阈值复核 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★★☆☆ | 1.5h | 两条校准数据均留痕；翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ✅ |
 | 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ✅ |
-| 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ⬜ |
+| 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ✅ |
 | 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫 + T1（≥75 例 / 9 文件）+ T2 补并发峰值断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ⬜ |
 | 8 | v0.1.1-dev-08 | dev | 发布 | **S7 Verification & Close**：真机八项验收（对仿真端点）、`.vsix`、合并保留历史 + tag `v0.1.1`、Issue 收口。详见 `400-build` §3.8 | ★★☆☆☆ | 1h | `200-spec` §2 八项验收全过；tag 已推送；上架与真机校准 `[DEFERRED]` 已登记 | ⬜ |
 
@@ -82,3 +82,11 @@
 - **发现**：① 契约里 `ERR-08` 的可执行验证含「产生一次性引导」，而引导与「未配置 Key」状态栏瞬时态按版本计划归 **S5**——翻牌时已把验证列精化为 S4 实际证据并显式标注 S5 待办，避免虚假「已兑现」；② 深度相等断言（`test/config.test.ts`）在 `SoneCheckConfig` 增字段后必然破裂——属契约面扩展的必然代价，已同步期望而非放宽断言
 - **失误**：① `SetApiKeyDeps` 误用 `Promise` 而 `showInputBox` 返回 `Thenable`，编译期报 `TS2739`/`TS2322`——改为 `PromiseLike`（与 `SecretStoragePort` 一致）；② `test/secrets.test.ts` 的 `INV-03` 用例先 `clearApiKey()` 再断言存储内容，顺序颠倒导致假失败——调整断言顺序
 - **遗留**：S5 补「未配置 Key」状态栏瞬时态 + 每会话至多一次的一次性引导 + 降级聚合文案（当前为最小可测文案）；`GUARD-06`（Key 泄漏守卫）脚本落盘归 S6，本步已保证代码形态满足其判定条件
+
+#### S5 Egress Migration（4ccf480）
+
+- **概要**：输出侧呈现补齐——`ui/status` 增 `no-key` 瞬时态（**无错误色**：宽限非故障）；`ui/commands` 按 `InspectionReport` 三支分发（宽限 → 会话级一次性引导 + 状态栏 / 清单非空 → **有效结果优先**、关闭清单后再提示降级 / 全失败 → 不弹清单仅聚合提示）；`FAILURE_LABELS` 给出五类可读归因；`04` §2 增「一次性引导通知」「降级聚合提示」两行并对齐状态栏文案（验证：`compile` / `guard` / T1 **107 例 / 12 文件**（棘轮 99→107）/ T2 11 例 / 契约 lint 全绿 · `grep console.log src/` 无输出 · 打包面仅 LICENSE/README/package.json + out）
+- **偏差**：无（`04` §2 为本步 SSOT 对齐面，属澄清式修订；输出通道一行显式标注随 O2 顺延至 `v0.2.0`，避免读者误以为本版有日志）
+- **发现**：① 降级归因的人类可读标签必须落在 **UI 层**（`04` §2 是文案 SSOT），`core` 只给 `code` + `count`——归因与呈现的边界在 S4 的 `InspectionReport` 设计里已定，本步只是把它落到代码；② `JevFailureCode` 含 `ERR-08` 但它走宽限分支永不入 `degraded`，故 `FAILURE_LABELS` 用 `Partial<Record<…>>` 而非穷尽映射——**类型系统如实反映了业务事实**，未用空标签凑满
+- **失误**：`FAILURE_LABELS` 初版声明为穷尽 `Record<JevFailureCode, string>` 导致编译期 `TS2741`（缺 `ERR-08`）；`NoKeyDeps.guide` 误用 `Promise` 而 `showInformationMessage` 返回 `Thenable` → 编译期两错，均改为 `Partial` 与 `PromiseLike` 后转绿
+- **遗留**：引导的一次性粒度为**扩展会话**（内存标记、不持久化，重载窗口后可再引导）——若真机验证认为「每次重载都提示」仍偏吵，改为「配置项静默标记」归后续版本；`GUARD-06` 脚本落盘归 S6
