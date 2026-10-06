@@ -57,7 +57,7 @@
 - **幂等性**：幂等（同一 `state` + `questions` 重复提交返回语义等价判定）
 - **超时**：单请求超时上限 **500ms**（定案依据 2026-10-06 真实端点实测：会话内**首请求 429ms**（冷 TLS + 服务端预热）、稳态 152–213ms；原定 400ms 会在冷启动误触发 `ERR-02`；500ms 等于 `00` §3 单块判定预算上限，不破层级）；超时视为 `ERR-02` 走降级，**不重试**
 - **版本兼容性**：请求侧固定 `model: "jev-latest"`；响应体 `model` 字段返回**实际执行的锁定版本**（如 `jev-1.13.0`），须写入日志以便追溯判定口径变化
-- **上游规范**：TypeSafe 官方 API reference（`https://docs.typesafe.ai/api`）为唯一权威；本节只登记**本项目使用的子集**，不重定义上游语义
+- **上游规范**：TypeSafe 官方 API reference（`https://docs.typesafe.ai/api`）为唯一权威；本节只登记**本项目使用的子集**，不重定义上游语义。**全文参考快照**（端点 / 三型 question / 响应 / 错误码全集 / 模型版本 / `confidence` 公式 / 实测校准）见 `docs/reference/jev-api.md`——只读参考，非我方契约
 
 **Request**（全部输入装入 `state`；`questions` 为原子问题映射，key 由本项目定义）
 
@@ -258,6 +258,7 @@
 | `01_TECHNICAL_SPEC.md` | upstream | 技术选型与约束 |
 | `02_SYSTEM_DESIGN.md` | upstream | 架构与数据流 |
 | `dev-meta/docs/06-contract-based-dev.md` | 外部权威 | 契约规范：§4 记录 / §4.2 状态 / §6 组织与索引 / §7 引用纪律（只引用） |
+| `docs/reference/jev-api.md` | 关联 | 上游 Jev API 的**全文参考快照**（2026-10-06）——只读查阅用；权威仍为官方文档（见 §2.1 上游规范） |
 
 ---
 
