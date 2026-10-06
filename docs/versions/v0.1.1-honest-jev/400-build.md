@@ -64,7 +64,7 @@
 |---|---|---|---|
 | `GUARD-01` | `core/` 层出现 `vscode` 引用 | （同 `v0.1.0`） | 守单向分层 |
 | `GUARD-02` | `getConfiguration` 出现在 `infra/configSource.ts` 之外 | （同 `v0.1.0`） | 配置唯一出口 |
-| `GUARD-03` | 判定参数被硬编码 | `grep -rnE "\b0\.4\b\|\b2048\b\|\b400\b\|\b150\b" src/ \| grep -v "constants.ts"` 须无输出 | 守 `INV-07`（新增超时 / 退避字面量） |
+| `GUARD-03` | 判定参数被硬编码 | `grep -rnE "\b0\.4\b\|\b2048\b\|\b500\b\|\b150\b" src/ \| grep -v "constants.ts"` 须无输出 | 守 `INV-07`（新增超时 / 退避字面量；`400` 已随 S3 实测定案为 `500`） |
 | `GUARD-04` | payload 超过 2048 字节 | （同 `v0.1.0`，单测断言） | 守 `INV-02` |
 | `GUARD-05` | 清单项无法定位 | （同 `v0.1.0`，单测断言） | 守 `INV-06` |
 | `GUARD-06` | Key 明文泄漏 | `grep -rn "jevApiKey" src/ \| grep -v "infra/secrets.ts"` 须无输出 | 守 `INV-03`（本版新增） |
@@ -253,7 +253,7 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 - **步骤拆解**：
   1. `guard:06`（Key 泄漏）落盘并入聚合 `guard`；`GUARD-03` 模式增补 `400` / `500` / `150` 字面量
   2. **T2 补齐剩余断言**（S2 已落地 11 例：正常路径 / 契约形态 / Key 不入载荷 / `ERR-01`~`05` 降级全谱 / 重试次数 / 超时）：本步只补**并发峰值**（在飞 ≤ 4，来自 S4 的 semaphore）与 S3 的真实端点复核结论留痕；`npm run test` 聚合 = `test:unit && test:integration`（S2 已配好）
-  3. 两层基线核对：T1 **≥75 例 / 9 文件**、T2 **≥11 例**（S2 后棘轮值），逐用例比对；删除或跳过须在 §2 标注理由
+  3. 两层基线核对：T1 **≥107 例 / 12 文件**、T2 **≥12 例**（S6 实测棘轮值：T1 自 S2 的 75 例经 S4/S5 递增至 107；T2 自 S2 的 11 例递增至 12），逐用例比对；删除或跳过须在 §2 标注理由
   4. 契约结构 lint（无条件必跑）：`python3 ~/dev/dev-meta/samples/contract-lint/contract_lint.py --root . --contract-file docs/03_CONTRACTS_AND_API.md`
 - **后置条件**：`npm run guard`、`npm run test:unit`、`npm run test:integration`、契约 lint 均退出码 0
 
@@ -311,6 +311,6 @@ stateDiagram-v2
 - **S3**：并发复核数据已记录；第一批翻牌完成（以 T2 证据为准）
 - **S4**：`GUARD-01/02/06` 全绿；`setApiKey` 全流程（写入 / 取消 / 清除）真机可用
 - **S5**：宽限两态与降级聚合真机可用；`GUARD-05` 全绿
-- **S6**：6 条守卫 + T1（≥75 例 / 9 文件）+ T2（≥11 例，含并发峰值）+ 契约 lint 全绿；无 `console.log`
+- **S6**：6 条守卫全绿（新增 `guard:06` Key 泄漏扫描）+ T1（≥107 例 / 12 文件）+ T2（≥12 例，含上游侧并发峰值与端到端预算）+ 契约 lint 全绿；`grep -rn "console.log" src/` 无输出
 - **S7**：`200-spec` §2 八项真机验收全过；`.vsix` 产出；`v0.1.1` annotated tag 已推送（上架 `[DEFERRED]` 待 `VSCE_PAT`）
 - **顺序说明**：S2 必须先行（T2 证据是 S3 翻牌前提）；S4 先于 S5（宽限信号与聚合信号由 S4 产出）
