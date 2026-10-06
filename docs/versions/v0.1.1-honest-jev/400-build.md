@@ -72,8 +72,8 @@
 | Step | 名称 | 执行态 | 环节 | guard | 交付物 / 跳过理由 |
 |---|---|---|---|---|---|
 | S0 | Scaffold & Clean | 执行 | 开发 | — | `constants.ts` 增量（超时 / 退避 / 并发 / 默认 endpoint）；`tools/jev-mock/` 工程骨架（Worker 模块 + `wrangler.toml` + `.vscodeignore` 增列 `tools/`）；`package.json` 增 `test:integration` 占位与 `wrangler` devDependency。**显式登记：O2 埋点顺延，本版无运行期日志** |
-| S1 | Contract & ADR | 执行 | 设计 | — | ADR-006 / ADR-007 核对回填（已落盘）；`03` 超时 / 重试定案与 `ERR-08` 语义回写；`API-03` 公开签名冻结（`hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`） |
-| S2 | Core & Prototype | 执行 | 开发 | GUARD-03,04,06 | 真实 `jevClient`（wire 组装 / 超时 / 重试 / 归一 / `failure` 信号）+ `tools/jev-mock` 五类故障注入 + T2 契约测试骨架（五类故障全绿） |
+| S1 | Contract & ADR | 执行 | 设计 | — | ADR-006 / ADR-007 核对回填（已落盘）；`03` 超时 / 重试定案与 `ERR-08` 语义回写；**`03` 失败面按上游实测补 `400` / `403` 归类（纯增量）**；`API-03` 公开签名冻结（`hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`）；**`tools/jev-mock` 按上游实测收紧校验 + 补 `unauthorized` / `forbidden` / `rate529` 注入，为 S2 的 T2 打地基** |
+| S2 | Core & Prototype | 执行 | 开发 | GUARD-03,04,06 | 真实 `jevClient`（wire 组装 / 超时 / 重试 / 归一 / `failure` 信号）+ 仿真端点故障注入复核（S1 已补齐 8 个状态码面）+ T2 契约测试骨架 |
 | S3 | Standard Finalization | 执行 | 开发 | GUARD-03 | 并发上限 4 实测复核（仿真端点注入延迟场景）；`sonecheck.endpoint` 回写 `03` §3；翻牌第一批（`ERR-01`~`ERR-05` / `API-01` 真实链路 / `INV-04`，以 T2 证据为准） |
 | S4 | Ingress Migration | 执行 | 开发 | GUARD-01,02,06 | `secrets.ts` 落地；`configSource` / `config` 增 `endpoint`；`riskEngine` 并发编排与 `failure` 剔除；`setApiKey` 命令注册 |
 | S5 | Egress Migration | 执行 | 开发 | GUARD-05 | 宽限短路（一次性引导 + 状态栏瞬时态）；降级聚合提示；清单零变更复核（`04` §2 状态表对齐） |
@@ -109,8 +109,10 @@
 - **目标**：把开工前已定案的契约变更（`ADR-006` / `ADR-007`）核对回写，并冻结 `API-03` 公开签名。
 - **步骤拆解**：
   1. 核对 ADR-006 / ADR-007 已落盘且 `03` 的三处回写完成（超时 / 重试定案、`ERR-08` 宽限语义、`CFG-01` `sonecheck.endpoint` 纯增量）
-  2. `src/infra/secrets.ts` 写死公开签名（此时仅签名，实现随 S4）
-  3. 跑契约结构 lint 确认零漂移
+  2. **`03` 失败面按上游实测补齐（纯增量，不新增编号、不改不变式）**——依据 2026-10-06 对真实端点的 8 次探测：`400 api_usage_error` 并入 `ERR-05`（请求不合规，与 422 同类）；`403 authentication_error` 并入 `ERR-04`（鉴权失败，与 401 同类）；并注明「错误体形态不固定（`detail` 可为对象 / 数组 / 字符串），本项目**只按状态码归一、不解析 body**」
+  3. **冻结 `API-03` 公开签名**：`hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`（与 `02` §2 模块表逐字一致）。**本步不建 `secrets.ts` 空壳文件**——签名以 `02` §2 与下方签名块为准，实现随 S4 一次落地（避免未实现的方法体变成死代码与假绿灯）
+  4. **契约仿真端点按上游实测收紧**（`tools/jev-mock/handler.mjs`）：`question.type` 白名单（`noul` / `choice` / `score`，未知 → 400）、`choice.criteria` 必填非空（缺失 → 422）、`model` 必填（缺失 → 422）、`noul` 须有 `instructions` 或 `criteria`（均缺 → 400）；答案自洽化（`choice.confidence` 由 probabilities 导出、`score` 与概率分布对齐）；新增故障注入 `unauthorized`（401）、`forbidden`（403）、`rate529`（529），使 `ERR-04` 的四个状态码全覆盖；README 标注 `usage` 与判定值为**确定性占位值**（T2 断言 wire 与归一，不断言模型分布）
+  5. 跑契约结构 lint 确认零漂移，并对 mock 逐项实测复核（上表后置条件列出的每条都要有 curl 级证据）
 - **函数签名与伪代码**：
 
 ```text
@@ -123,6 +125,7 @@ async function clearApiKey(): Promise<void>             // 清除（ERR-11 二�
 ```
 
 - **异常与边界**：SecretStorage 底层异常（如 OS 密钥库锁）→ 向上抛系统级异常，`ui/commands` 提示一次后终止——**不得**归入 `ERR-08`（那是「未配置」，不是「读不到」）
+- **后置条件（mock 对齐）**：契约仿真端点与上游实测口径**逐项一致**，每条须有 curl 级证据——未知 `type` → 400 · `choice` 缺 `criteria` → 422 · 缺 `model` → 422 · `noul` 缺 `instructions` 且无 `criteria` → 400 · 无鉴权 → 403 / 错 Key → 401（均可注入）· 429 / 529 可注入 · `confidence` 与 `score` 由概率分布导出。**判据要点：mock 不得比真实上游宽松**——宽松会让 S2 的 T2 假绿。
 
 #### 关键行为契约
 
@@ -131,14 +134,18 @@ async function clearApiKey(): Promise<void>             // 清除（ERR-11 二�
 | `hasApiKey` | 未配置 | given 空 SecretStorage → when `hasApiKey` → then 返回 `false`，不抛错 |
 | `getApiKey` | 未配置 | given 空 SecretStorage → when `getApiKey` → then 返回 `null`，不抛错 |
 | `setApiKey` | 写入后读取 | given 合法串 → when set 后 get → then 原值返回且存储介质非明文文件（SecretStorage 语义） |
+| `handler`（mock） | 未知 `question.type` | given `type: "bogus"` → when POST → then `400`，与上游实测一致（**不得放行**） |
+| `handler`（mock） | `choice` 缺 `criteria` | given 无 `criteria` → when POST → then `422`（**不得回 `UNKNOWN` 蒙混过关**） |
+| `handler`（mock） | 鉴权故障注入 | given `fault: unauthorized` / `forbidden` → when POST → then `401` / `403` |
+| `handler`（mock） | 答案自洽 | given choice 概率分布 → when 返回 → then `confidence` 由分布导出；`score` 与概率分布对齐 |
 
 ### 3.3 S2 Core & Prototype
 
 - **目标**：真实客户端与仿真端点在同一契约下互为镜像，T2 契约测试建立。
 - **步骤拆解**：
   1. `src/infra/jevClient.ts` 重写：`createJevClient(deps)` 工厂（`deps = { endpoint, getApiKey, fetchImpl? }`，`fetchImpl` 供 T1 注入）；wire 组装（两个 question 的 `instructions` 用**结构化写法**并以反引号引用 `state` 字段，`risk_score` 附 `criteria: {true, false}`——见 `300-design` §4.1）、`AbortController` 超时、重试、五类归一、`failure` 信号（`300-design` §4.1–4.4）
-  2. `tools/jev-mock/worker.mjs` 完整实现：合规响应 + `usage` + `model` 字段；五类故障注入
-  3. `test/integration/jevContract.test.ts`：对仿真端点跑五类故障 + 超时 + 重试计数 + Key 泄漏断言（起服方式：vitest `beforeAll` 拉起 `wrangler dev --port <随机>` 或 `local.mjs` 子进程，`afterAll` 回收）
+  2. `tools/jev-mock/worker.mjs` 补齐（S1 已收紧校验与注入面）：合规响应 + `usage` + `model` 字段
+  3. `test/integration/jevContract.test.ts`：对仿真端点跑全套故障（`ERR-01`~`05`，含 401 / 403 / 429 / 529 四个状态码）+ 超时 + 重试计数 + Key 泄漏断言（起服方式：vitest `beforeAll` 拉起 `local.mjs` 子进程（`PORT` 随机），`afterAll` 回收；`wrangler dev` 仅在需要 workerd 形态时用）
   4. `v0.1.0` 的 `scoreHunk` / `createMockJevClient` 移入 `test/fixtures/`（T1 打分用例改引 fixture，基线不降）
 - **函数签名与伪代码**：
 
@@ -226,7 +233,7 @@ async function setApiKeyFlow(): Promise<void>                  // API-03 全流�
 - **目标**：6 条守卫全绿、T1 基线不降、T2 全绿、契约 lint 全绿；本版仍无运行期日志（`grep -rn "console.log" src/` 须无输出）。
 - **步骤拆解**：
   1. `guard:06`（Key 泄漏）落盘并入聚合 `guard`；`GUARD-03` 模式增补 `400` / `150` 字面量
-  2. `test:integration` 填充（S2 骨架 → 全量：五类故障 / 超时 / 重试计数 / Key 泄漏 / 并发峰值）；`npm run test` 聚合 = `test:unit && test:integration`
+  2. `test:integration` 填充（S2 骨架 → 全量：`ERR-01`~`05` 故障全谱，含 401 / 403 / 429 / 529 四个状态码 + 超时 / 重试计数 / Key 泄漏 / 并发峰值）；`npm run test` 聚合 = `test:unit && test:integration`
   3. T1 基线核对：≥51 例 / 8 文件，逐用例比对 `v0.1.0` 清单（删除或跳过须在 §2 标注理由）
   4. 契约结构 lint（无条件必跑）：`python3 ~/dev/dev-meta/samples/contract-lint/contract_lint.py --root . --contract-file docs/03_CONTRACTS_AND_API.md`
 - **后置条件**：`npm run guard`、`npm run test:unit`、`npm run test:integration`、契约 lint 均退出码 0
@@ -280,8 +287,8 @@ stateDiagram-v2
 > 每 Step 提 PR 前跑：grep / 单测 / T2 / diff 行数。规范指针 `dm-contract-gate`。
 
 - **S0**：`npm run compile` 零错误；`wrangler dev` 起服并通过健康检查
-- **S1**：ADR-006 / ADR-007 已登记；`03` 三处回写完成；`secrets` 签名冻结；lint 零漂移
-- **S2**：T2 五类故障 + 超时 + 重试 + Key 泄漏断言全绿；`scoreHunk` 移入 fixture 后 T1 基线不降
+- **S1**：ADR-006 / ADR-007 已登记；`03` 三处回写 + 失败面补 `400` / `403` 完成；`secrets` 四签名冻结且与 `02` §2 一致；契约仿真端点对上游实测口径逐项对齐（不宽松）；lint 零漂移
+- **S2**：T2 故障全谱（8 个状态码）+ 超时 + 重试 + Key 泄漏断言全绿；`scoreHunk` 移入 fixture 后 T1 基线不降
 - **S3**：并发复核数据已记录；第一批翻牌完成（以 T2 证据为准）
 - **S4**：`GUARD-01/02/06` 全绿；`setApiKey` 全流程（写入 / 取消 / 清除）真机可用
 - **S5**：宽限两态与降级聚合真机可用；`GUARD-05` 全绿

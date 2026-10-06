@@ -106,7 +106,7 @@
 ### 4.6 契约仿真端点（`tools/jev-mock/`，`ADR-007`）
 
 - Cloudflare Worker 兼容模块（`export default { fetch }`，零运行时依赖）：`npx wrangler dev` 本地起服务、`npx wrangler deploy` 一键部署；`wrangler` 仅 devDependency。
-- 契约面 = `03` §2.1（请求 / 响应 / 错误码全集）；故障注入经请求头 `x-jev-mock-fault: timeout | disconnect | http500 | rate429 | badschema`，五类故障分别映射 `ERR-02` / `ERR-01` / `ERR-03` / `ERR-04` / `ERR-05`。
+- 契约面 = `03` §2.1（请求 / 响应 / 错误码全集）；故障注入经请求头 `x-jev-mock-fault`：`disconnect` → `ERR-01`、`timeout` → `ERR-02`、`http500` → `ERR-03`、`badschema` → `ERR-05`、`unauthorized`(401) / `forbidden`(403) / `rate429`(429) / `rate529`(529) → `ERR-04`（该错误码的四个上游状态码全覆盖）。**校验严格度以 2026-10-06 真实端点实测为准**（未知 `type` → 400 · `choice` 缺 `criteria` → 422 · 缺 `model` → 422 · `noul` 缺 `instructions` 且无 `criteria` → 400）——**mock 不得比上游宽松**，否则 S2 的 T2 假绿。
 - 双用途：T2 契约测试的连接目标 + S7 真机验收的端点；不进 `.vsix`。
 - **定位演进（2026-10-06 修订）**：Jev Key 已到位、真实端点可用后，本端点**从「注册暂停期的替身」改为「可编程故障注入夹具」**——真实端点无法按需制造 `disconnect` / `timeout` / `badschema` / `429` / `500`，故 `ERR-01`~`ERR-05` 与 `INV-04` 的自动化证据只能由本端点提供；真实端点则专责「上游真实分布校准」（延迟、`noul` 分布、schema 漂移）。两者职责不重叠，互不替代（`ADR-007` 的决策本身不变，仅理由更新，按 ADR 纪律不改其原文）。
 
@@ -148,7 +148,7 @@
 | 并发编排 | T1 单元 | 在飞 ≤4 / 结果按提交顺序聚合 / 全失败返回空清单 | 纯 Node（内存 stub 计数） |
 | Key 生命周期 | T1 单元 | 取消无副作用 / 空串二次确认 / `secrets` 外无明文（`GUARD-06` 同源断言） | 纯 Node（SecretStorage stub） |
 | **wire 组装与解析** | T1 单元 | `serializePayload` 增量断言（`state`/`questions` 外层）；响应 schema 三类不合规 → `ERR-05` | 纯 Node |
-| **五类故障降级** | **T2 契约**（首次引入） | 仿真端点注入 `disconnect`/`timeout`/`http500`/`rate429`/`badschema` → 各归 `ERR-01`~`ERR-05`、放行、一次性聚合 | 真实 HTTP（`wrangler dev` 仿真端点） |
+| **故障降级全谱** | **T2 契约**（首次引入） | 仿真端点注入 8 个状态码（`disconnect`/`timeout`/`http500`/`badschema`/`unauthorized`/`forbidden`/`rate429`/`rate529`）→ 各归 `ERR-01`~`ERR-05`、放行、一次性聚合 | 真实 HTTP（`local.mjs` 仿真端点） |
 | **超时与重试** | T2 契约 | 500ms 超时触发（断言耗时 ≈500ms）；`429` 恰好重试 1 次（退避 150ms）；重试计数断言 | 同上 |
 | **Key 泄漏** | T2 契约 | 出站请求体与错误路径不含 Key 明文 | 同上 |
 | 真机八项 | T3 端到端 | `200-spec` §2 逐项（对仿真端点） | Extension Host（人工验证） |
