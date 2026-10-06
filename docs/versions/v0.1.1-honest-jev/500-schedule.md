@@ -25,7 +25,7 @@
 | 4 | v0.1.1-dev-04 | dev | 开发 | **S3 Standard Finalization**：新增 `harness/calibrate.ts` 校准工具（`--latency` 耗时曲线 / `--live` 真实端点）、并发 4 复核、**真实端点复核（条件式：超时 / `noul` 分布与阈值复核 / schema 漂移）**、`endpoint` 契约核对、第一批翻牌（T2 证据）。详见 `400-build` §3.4 | ★★★☆☆ | 1.5h | 两条校准数据均留痕；翻牌集合（`ERR-01`~`05` / `API-01` / `INV-04`）完成且可追溯；真实端点复核「有则记录、无则显式跳过」 | ✅ |
 | 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ✅ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ✅ |
-| 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫（新增 `guard:06` Key 泄漏扫描、`guard:03` 补 `500`/`150` 字面量）+ T1（≥107 例 / 12 文件）+ T2 补**上游侧并发峰值与端到端预算**断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ⬜ |
+| 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫（新增 `guard:06` Key 泄漏扫描、`guard:03` 补 `500`/`150` 字面量）+ T1（≥107 例 / 12 文件）+ T2 补**上游侧并发峰值与端到端预算**断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ✅ |
 | 8 | v0.1.1-dev-08 | dev | 发布 | **S7 Verification & Close**：真机八项验收（对仿真端点）、`.vsix`、合并保留历史 + tag `v0.1.1`、Issue 收口。详见 `400-build` §3.8 | ★★☆☆☆ | 1h | `200-spec` §2 八项验收全过；tag 已推送；上架与真机校准 `[DEFERRED]` 已登记 | ⬜ |
 
 > 状态：⬜ 待开始 / 🔄 进行中 / ✅ 已完成 / ❌ 已取消
@@ -90,3 +90,11 @@
 - **发现**：① 降级归因的人类可读标签必须落在 **UI 层**（`04` §2 是文案 SSOT），`core` 只给 `code` + `count`——归因与呈现的边界在 S4 的 `InspectionReport` 设计里已定，本步只是把它落到代码；② `JevFailureCode` 含 `ERR-08` 但它走宽限分支永不入 `degraded`，故 `FAILURE_LABELS` 用 `Partial<Record<…>>` 而非穷尽映射——**类型系统如实反映了业务事实**，未用空标签凑满
 - **失误**：`FAILURE_LABELS` 初版声明为穷尽 `Record<JevFailureCode, string>` 导致编译期 `TS2741`（缺 `ERR-08`）；`NoKeyDeps.guide` 误用 `Promise` 而 `showInformationMessage` 返回 `Thenable` → 编译期两错，均改为 `Partial` 与 `PromiseLike` 后转绿
 - **遗留**：引导的一次性粒度为**扩展会话**（内存标记、不持久化，重载窗口后可再引导）——若真机验证认为「每次重载都提示」仍偏吵，改为「配置项静默标记」归后续版本；`GUARD-06` 脚本落盘归 S6
+
+#### S6 Guards & Tests（596ac02）
+
+- **概要**：门禁闭环——`guard:06` 落盘（Key 泄漏扫描，守 `INV-03`）并入聚合；`guard:03` 字面量清单补 `500` / `150`；T2 补**上游侧并发峰值 + 端到端预算**断言；两层基线棘轮更新为 T1 **107 例 / 12 文件**、T2 **12 例**（验证：`guard:01`~`06` **逐条 ✓** · `compile` 零错误 · T1 107/12 · T2 12/1 · 契约 lint 全绿 · `grep -rn "console.log" src/` 无输出 · 打包面无泄漏）
+- **偏差**：`400-build` §1.4 的 `GUARD-03` 清单原写 `400`，与 S3 实测定案（`500ms`）不一致——守卫按**现行契约**实现为 `500`，同时回写 §1.4 表格；这类「计划表滞后于已定案值」在后续 Step 需一并复核
+- **发现**：① **并发峰值只能从上游侧证明**——客户端无法自证「我的请求重叠了几个」，故给 mock 加 `inFlight` 峰值计数，T2 用专用实例（避免与其它用例的峰值混淆）断言 `peak ≤ 4 且 > 1`；这是「真并发 + 真 HTTP」唯一能同时被验证的层（T1 的并发断言用的是 stub，只证明引擎扇出）；② `console.` 的粗放 grep 会误报 `https://console.typesafe.ai/keys` 这个 URL 字符串——DoD 判据须用精确的 `console.log`，已在 §6 固化为该命令
+- **失误**：抽取 `handler.mjs` 的 `route()` 时（为给并发计数包一层 `try/finally`）连撞两错——① 函数声明结尾误留 `};` 触发 `SyntaxError`；② `latencyMs` 是 `createHandler` 闭包变量，提取后成为 `ReferenceError`，起服即失败、T2 整文件 12 例 skipped。两错均由「T2 全 skipped + 手动起服看 stderr」在提交前拦下
+- **遗留**：无（`GUARD-06` 已落盘并入聚合；Marketplace 上架与真实端点校准的挂账项同前）
