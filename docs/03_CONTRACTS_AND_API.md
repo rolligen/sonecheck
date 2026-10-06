@@ -15,7 +15,7 @@
 |------|------|--------|------|------|----------|-----------|
 | INV-01 | `[CURRENT]` | 检查流程不得阻断、取消或延迟用户的提交动作；检查的全部失败都必须以「放行」收尾 | `core/riskEngine` | 内部 | 本文 §1 + `00` §3 可用性 | 单测：`test/riskEngine.test.ts`（本地失败以 `ERR-*` 分类失败抛出、成功路径恒返回 `RiskItem[]`）；`ui/commands.ts` 的 `catch` 不重抛 |
 | INV-02 | `[CURRENT]` | 任何离开本机的 payload 只含 diff hunk 与该 hunk 的限长上下文（**单块 payload ≤ 2KB = 2048 字节，含 `context_code`**），**不得包含完整源文件** | `core/contextBuilder` | 出站 | 本文 §2.1 Request | 单测：`test/contextBuilder.test.ts` 断言 payload 序列化总长 ≤ 2048；`test/diffParser.test.ts` 断言切分后单块不越界 |
-| INV-03 | `[PLANNED]` | Jev API Key 不得以明文出现在工作区文件、日志、遥测、错误信息或 UI 文本中 | `infra/secrets` | 内部 | 本文 §3 | `grep -rn "jevApiKey" src/ \| grep -v "infra/secrets.ts"` 须无输出；单测：日志字段不含 Key 值 |
+| INV-03 | `[CURRENT]` | Jev API Key 不得以明文出现在工作区文件、日志、遥测、错误信息或 UI 文本中 | `infra/secrets` | 内部 | 本文 §3 | `grep -rn "jevApiKey" src/ \| grep -v "infra/secrets.ts"` 须无输出（当前：仅 `infra/secrets.ts:38`）；单测：`test/secrets.test.ts` 断言明文只经 `getApiKey` 单向流出、`test/setApiKey.test.ts` 断言任何分支不进通知文案 |
 | INV-04 | `[CURRENT]` | Jev 不可用（网络失败 / 超时 / 配额耗尽 / 非 2xx）时必须降级为「静默放行 + 一次性提示」，不得向上抛错终止流程 | `infra/jevClient` | 内部 | 本文 §4 `ERR-01`–`ERR-04` | T2 契约测试（`test/integration/jevContract.test.ts`）：对契约仿真端点注入 `disconnect` / `timeout` / `http500` / `401` / `403` / `429` / `529` / `badschema` → 断言 resolve 且 `failure` 归类正确、**无一抛异常**、重试次数符合策略 |
 | INV-05 | `[CURRENT]` | 检查过程对工作区严格只读：不得修改、暂存、格式化或删除任何文件 | `infra/git` | 内部 | `02` §3 边界说明 | 单测：`test/git.test.ts` 断言调用前后 `git status --porcelain` 完全一致；`grep`：`src/infra/git.ts` 只出现 `diff` / `rev-parse` 子命令 |
 | INV-06 | `[CURRENT]` | 清单中每一项必须可定位到真实存在的文件与行号（禁止展示无法跳转的条目） | `ui/riskList` | 内部 | 本文 §2.2 | 单测：`test/threshold.test.ts`（不可定位即剔除）与 `test/riskEngine.test.ts`（清单项的 `filePath` / `startLine` 可在真实文件中解析） |
@@ -162,7 +162,7 @@
 
 ### 2.3 `API-03` 命令 `sonecheck.setApiKey`（VS Code 命令契约）
 
-- **状态**：`[PLANNED]`
+- **状态**：`[CURRENT]`（`v0.1.1` 落地：`ui/commands` 注册命令 + `infra/secrets` 写入 SecretStorage；分支逻辑抽为可注入纯流程 `runSetApiKey`，故 `ERR-10` / `ERR-11` 可单测）
 - **Path**：VS Code 命令 ID `sonecheck.setApiKey`
 - **Method**：命令调用（无参）
 - **归属 / 调用方**：`ui/commands` / 由用户手动触发
@@ -231,10 +231,10 @@
 | `ERR-05` | `[CURRENT]` | 请求不合规（`400` / `422`）或响应 schema 不合规 | ERROR | 丢弃该块，写入日志，不进入清单 | `v0.1.1` | T1 + T2：请求侧未知 `type` → `400`、`choice` 缺 `criteria` → `422`（经 `/stats.lastRequest` 断言实发请求体）；响应侧缺字段 / 越界 / 枚举外取值各一例 → 断言该块被丢弃、其余块保留 |
 | `ERR-06` | `[CURRENT]` | 非 git 仓库 | WARN | 提示一次并终止 | `v0.1.0` | 单测：`test/git.test.ts` 断言非仓库目录抛出分类失败 `ERR-06` |
 | `ERR-07` | `[CURRENT]` | 暂存区无改动 | INFO | 提示一次「无暂存改动」 | `v0.1.0` | 单测：`test/riskEngine.test.ts` 断言空 diff 抛出分类失败 `ERR-07` |
-| `ERR-08` | `[PLANNED]` | API Key 未配置（`API-02` 前置校验；宽限跳过语义，`ADR-006`） | WARN | 首次：一次性引导（带「设置 Key」按钮直达 `sonecheck.setApiKey`）；检查静默跳过（视为放行）；后续仅状态栏短暂提示 | `v0.1.1` | 单测：密钥可读性为 `false` → 断言不进入判定、产生一次性引导且状态非错误 |
+| `ERR-08` | `[CURRENT]` | API Key 未配置（`API-02` 前置校验；宽限跳过语义，`ADR-006`） | WARN | 首次：一次性引导（带「设置 Key」按钮直达 `sonecheck.setApiKey`）；检查静默跳过（视为放行）；后续仅状态栏短暂提示 | `v0.1.1` | 单测（`test/riskEngine.test.ts`）：可读性为 `false` → 返回 `skipped: 'NO_KEY'`、**零请求零判定、不抛异常**，且优先于 `ERR-07`；`grep console.log src/` 无输出保证状态非错误。**一次性引导与「未配置 Key」状态栏瞬时态待 S5 落地** |
 | `ERR-09` | `[CURRENT]` | git 可执行文件缺失 | ERROR | 提示一次并终止 | `v0.1.0` | 单测：`test/git.test.ts` / `src/infra/git.ts` 的 `ENOENT` 分类分支（真机不可复现，以代码分支 + 分类断言为准） |
-| `ERR-10` | `[PLANNED]` | 用户取消输入（`API-03`） | INFO | 忽略，保持原值 | `v0.1.1` | 真机验证（原生输入框不可在纯 Node 复现）：取消后原值不变 |
-| `ERR-11` | `[PLANNED]` | 输入为空串（清除 Key，`API-03`） | WARN | 二次确认后清除 | `v0.1.1` | 单测：二次确认布尔为 `false` → 断言保留原值；真机验证确认路径 |
+| `ERR-10` | `[CURRENT]` | 用户取消输入（`API-03`） | INFO | 忽略，保持原值 | `v0.1.1` | 单测（`test/setApiKey.test.ts`）：`promptInput` 解析为 `undefined` → 断言零写入、零清除、零提示（`API-03` 流程已抽为可注入纯函数，故不必真机复现） |
+| `ERR-11` | `[CURRENT]` | 输入为空串（清除 Key，`API-03`） | WARN | 二次确认后清除 | `v0.1.1` | 单测（`test/setApiKey.test.ts`）：确认为 `false` → 保留原值且不写入；确认为 `true` → 清除并提示；未配置 Key 时空串不弹确认 |
 
 - **生效版本**：`v0.1.0` 只落地 `ERR-06` / `ERR-07` / `ERR-09`（本地失败路径，不依赖网络与密钥）；`ERR-01`~`ERR-05` 随真实判定服务在 `v0.1.1` 落地（对契约仿真端点验收，`ADR-007`），`ERR-08`（归 `API-02`，宽限语义 `ADR-006`）与 `ERR-10` / `ERR-11`（归 `API-03`）同版落地。本表为**完整错误码集合**，未生效项仍属合规返回值，仅当前实现不会产出。
 - **状态翻牌**：错误码状态与其 `生效版本` 同步——对应版本 S3 实测回填后由 `[PLANNED]` 翻 `[CURRENT]`；未生效项保持 `[PLANNED]`（`dev-meta/docs/06` §4.2）。
