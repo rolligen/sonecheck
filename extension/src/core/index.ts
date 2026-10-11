@@ -12,4 +12,4 @@ export { createRiskEngine } from './riskEngine';
 
 export type { RawConfigInput, SoneCheckConfig } from './config';
 export type { RiskItem, ScoredHunk } from './threshold';
-export type { RiskEngine, RiskEngineDeps } from './riskEngine';
+export type { InspectionReport, RiskEngine, RiskEngineDeps } from './riskEngine';

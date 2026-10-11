@@ -1,178 +1,30 @@
 /**
- * S2 measurement harness (`400-build` §3.3 step 4).
+ * Mock 分布测量（`v0.1.0` S2 产物，2026-09-23 收口时运行；`v0.1.1` S3 起保留为
+ * 「mock 侧对照」，与 `calibrate.ts` 共用 `harness/samples.ts` 的样本）。
  *
- * Runs the pure core over two data sources — this project's own git history and
- * a set of constructed samples — and prints the distributions S3 needs to fix
- * `riskThreshold` / context window / payload cap (`dev-meta/docs/02-version-rules.md` §6.3).
+ * 跑纯 core 侧的四维加权打分（打分器现为测试夹具 `test/fixtures/jevScoring.ts`，
+ * 因为 `v0.1.1` 起扩展不再内置 mock 判定器），输出 score / 上下文字节 / 归因 / 阈值
+ * 敏感性的分布，供 `riskThreshold` 与 payload 上限定案（`dev-meta/docs/02-version-rules.md` §6.3）。
  *
  * Dev-only, one-shot script: not part of the packaged extension, and never
  * imported by `src/`. Run with `npx tsx harness/measure.ts`.
  */
 
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
-
 import { MAX_PAYLOAD_BYTES, RISK_THRESHOLD } from '../src/constants';
-import { buildContext } from '../src/core';
-import { parseDiff, scoreHunk } from '../src/infra';
-import type { DecisionPolicy, Hunk, HunkPayload } from '../src/infra';
+import { scoreHunk } from '../test/fixtures/jevScoring';
+import type { DecisionPolicy } from '../src/infra';
 
-const REPO_ROOT = resolve(dirname(__filename ?? '.'), '..', '..');
+import { HISTORY_COMMITS, buildPayload, collectSamples, percentile } from './samples';
 
 const POLICY: DecisionPolicy = {
   sensitivePathPatterns: ['auth', 'payment', 'migration'],
   riskThreshold: RISK_THRESHOLD,
 };
 
-const HISTORY_COMMITS = 40;
 const THRESHOLD_SWEEP = [0.5, 0.6, 0.7, 0.8, 0.9];
-
-interface Sample {
-  source: 'history' | 'constructed';
-  hunk: Hunk;
-  /** `true` when the real file content was available for context building. */
-  usedSourceFile: boolean;
-}
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
-}
-
-function readHistoryDiff(): string {
-  try {
-    return execFileSync('git', ['log', '-p', '--no-merges', `-n${HISTORY_COMMITS}`, '--format='], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-    });
-  } catch (error) {
-    out(`history 读取失败：${(error as Error).message}`);
-    return '';
-  }
-}
-
-const CONSTRUCTED_DIFFS: ReadonlyArray<{ name: string; diff: string }> = [
-  {
-    name: 'auth 边界（token 校验）',
-    diff: [
-      'diff --git a/src/auth/token.ts b/src/auth/token.ts',
-      '--- a/src/auth/token.ts',
-      '+++ b/src/auth/token.ts',
-      '@@ -12,7 +12,9 @@ export function verify(token: string) {',
-      '   const secret = loadSecret();',
-      '-  return jwt.verify(token, secret);',
-      '+  if (!token) return null;',
-      '+  return jwt.verify(token, secret);',
-      ' }',
-    ].join('\n'),
-  },
-  {
-    name: '数据写入（事务边界）',
-    diff: [
-      'diff --git a/src/billing/payment-store.ts b/src/billing/payment-store.ts',
-      '--- a/src/billing/payment-store.ts',
-      '+++ b/src/billing/payment-store.ts',
-      '@@ -30,6 +30,7 @@ export async function settle(order) {',
-      '   await db.transaction(async (tx) => {',
-      '+    await tx.update("orders", order.id, { paid: true });',
-      '     return order;',
-      '   });',
-    ].join('\n'),
-  },
-  {
-    name: '契约破坏（导出签名）',
-    diff: [
-      'diff --git a/src/api/client.ts b/src/api/client.ts',
-      '--- a/src/api/client.ts',
-      '+++ b/src/api/client.ts',
-      '@@ -1,4 +1,4 @@',
-      '-export function request(url: string): Promise<Response>',
-      '+export function request(url: string, retries: number): Promise<Response>',
-    ].join('\n'),
-  },
-  {
-    name: '错误处理（吞掉异常）',
-    diff: [
-      'diff --git a/src/worker/job.ts b/src/worker/job.ts',
-      '--- a/src/worker/job.ts',
-      '+++ b/src/worker/job.ts',
-      '@@ -20,6 +20,7 @@ export async function run(job) {',
-      '   try {',
-      '     await job.execute();',
-      '+  } catch (error) {}',
-      ' }',
-    ].join('\n'),
-  },
-  {
-    name: '纯样式（引号与空行）',
-    diff: [
-      'diff --git a/src/util/format.ts b/src/util/format.ts',
-      '--- a/src/util/format.ts',
-      '+++ b/src/util/format.ts',
-      '@@ -5,3 +5,3 @@',
-      "-const sep = ':'",
-      '+const sep = ":"',
-    ].join('\n'),
-  },
-  {
-    name: 'migration（建表语句）',
-    diff: [
-      'diff --git a/db/migration/001_init.sql b/db/migration/001_init.sql',
-      '--- a/db/migration/001_init.sql',
-      '+++ b/db/migration/001_init.sql',
-      '@@ -1,2 +1,3 @@',
-      ' CREATE TABLE users (id INTEGER);',
-      '+DROP TABLE legacy_users;',
-    ].join('\n'),
-  },
-];
-
-function collectSamples(): Sample[] {
-  const samples: Sample[] = [];
-
-  for (const hunk of parseDiff(readHistoryDiff())) {
-    samples.push({ source: 'history', hunk, usedSourceFile: true });
-  }
-
-  for (const entry of CONSTRUCTED_DIFFS) {
-    for (const hunk of parseDiff(entry.diff)) {
-      samples.push({ source: 'constructed', hunk, usedSourceFile: false });
-    }
-  }
-
-  return samples;
-}
-
-function sourceLinesFor(hunk: Hunk): { lines: string[]; fromFile: boolean } {
-  const absolute = isAbsolute(hunk.filePath) ? hunk.filePath : join(REPO_ROOT, hunk.filePath);
-  try {
-    const lines = readFileSync(absolute, 'utf8').split(/\r?\n/);
-    return { lines, fromFile: true };
-  } catch {
-    // Historical or deleted file: fall back to the hunk's own lines so that the
-    // context pipeline is still exercised.
-    return { lines: hunk.diffContent.split('\n'), fromFile: false };
-  }
-}
-
-function percentile(sorted: number[], ratio: number): number {
-  if (sorted.length === 0) return 0;
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * ratio)));
-  return sorted[index];
-}
-
-function buildPayload(sample: Sample): { payload: HunkPayload; fromFile: boolean } {
-  const { lines, fromFile } = sourceLinesFor(sample.hunk);
-  return {
-    payload: {
-      filePath: sample.hunk.filePath,
-      changeType: sample.hunk.changeType,
-      diffHunk: sample.hunk.diffContent,
-      contextCode: buildContext(sample.hunk, lines),
-    },
-    fromFile,
-  };
 }
 
 function main(): void {

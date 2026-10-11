@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMockJevClient, scoreHunk } from '../src/infra';
+import { createMockJevClient, scoreHunk } from './fixtures/jevScoring';
 import type { DecisionPolicy, HunkPayload } from '../src/infra';
 
 const policy: DecisionPolicy = { sensitivePathPatterns: ['auth', 'payment', 'migration'], riskThreshold: 0.8 };
