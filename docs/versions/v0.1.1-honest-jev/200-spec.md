@@ -83,113 +83,493 @@
 > §2 给判据，本节给**可复现的操作步骤**。收口时逐项勾选并填结果，结果摘要写入 `500-schedule.md` §3 的 S7 执行记录。
 > 全程**不需要真实 Jev Key**——端点是本地仿真，鉴权不被校验；这也正是「代码全真、只差上游」的验证方式（`ADR-007`）。
 
-### 5.1 验收环境准备
+### 5.0 通用约定
 
-> ⚠️ **执行方式：逐行敲，或先删净所有 `#` 行再整块粘贴。**
-> `#` 开头是**写给人看的注释**，不是命令。整块粘贴进 zsh 时它们会被逐行执行，报 `command not found: #`。该报错**无害**（zsh 不会因单行失败中止），但会**掩盖真实失败**，也容易让人误以为前面的步骤没跑。
->
-> 与 §5.3 的循环块不同——那段是 `for` 循环，**必须整块执行**，否则只跑一半。
+**每一步都是三段式**：`① 操作` → `② 可能输出` → `③ 判断标准`。照着做、对输出、判通过，三步都过才进下一步。
+
+**粘贴方式分两种，别搞混**：
+
+| 块类型 | 怎么执行 |
+|---|---|
+| 独立命令块（步骤 A1~A6 里的 bash） | **逐行敲**，或先删掉所有 `#` 行再整块粘贴 |
+| 循环块（§5.4） | **必须整块粘贴**，否则只跑一半 |
+
+> `#` 开头是写给人看的注释，不是命令。整块粘贴到 zsh 会被当命令执行，报 `command not found: #`。这报错**无害**（zsh 不会因单行失败中止），但会**掩盖真实失败**，让人误以为前面的步骤没跑。
+
+> **全部检查必须在 `sonedemo` 窗口内执行**——扩展读的是当前窗口的工作区。
+
+### 5.1 标准态（验收开始前必须达成）
+
+| 对象 | 标准态 | 不达标的后果 |
+|---|---|---|
+| **mock 进程** | 单实例；`MOCK_LATENCY_MS=100`；未设 `MOCK_FAULT`；`/stats` 的 `total=0` | 缺延迟 → #7 的 `peak>1` **物理上不可能成立**；带故障 → 所有检查都降级；计数脏 → #6 #7 取证带历史值 |
+| **sonedemo git** | 暂存区恰好 13 块改动（1 敏感路径 + 12 低风险）；`.vscode/` 为 `??` 未跟踪 | hunk 数不对 → 清单条数、降级文案、`/stats` 计数全部对不上 |
+| **工作区配置** | `settings.json` 含三项契约默认值（见 R3） | 用户级 `settings.json` 的遗留值会盖过它 → #2 的 Top-K 判据不成立 |
+| **API Key** | **未配置**（A1 才配） | 已配则 A1 的「保存」与 A5 的「取消后保留」两条分支都验不到 |
+| **VS Code 窗口** | 已 `Reload Window`（引导闩锁归零） | 引导可能已被 claim → #3 的「首次出现引导」不出现 |
+
+### 5.2 Reset：把 sonedemo 拉回标准态
+
+> **每次验收开始前跑一遍；中途跑乱了也可以只重跑 R2~R7。** 全部步骤幂等，可重复执行。
+
+---
+
+#### R1 · 停掉所有 mock 实例
+
+**① 操作**
 
 ```bash
-# ① 安装产物（干净 VS Code）
-code --install-extension extension/sonecheck-0.1.1.vsix
-code --list-extensions --show-versions | grep sonecheck
-#   ↑ 期望 rolligen.sonecheck@0.1.1
-#   ⚠️ 「期望 …」不要写在命令行尾——会被 shell 连同注释词一起当参数传给 grep
-
-# ② 起契约仿真端点（无预设故障 + 100ms 延迟）——幂等，已在跑就不重复起
-#   ⚠️ MOCK_LATENCY_MS=100 不可省：延迟为 0 时请求瞬间完成，inFlight 永不重叠，
-#      #7 的 peak>1 判据在物理上不可能成立（实测 latency=0 → peak=1）。T2 同理。
-curl -sf http://127.0.0.1:8787/health >/dev/null || MOCK_LATENCY_MS=100 PORT=8787 node tools/jev-mock/local.mjs &
-sleep 1
-curl -s http://127.0.0.1:8787/health
-#   ↑ 期望 ok:true、faults 八项、defaultFault:null、latencyMs:100
-#   ⚠️ 若报 EADDRINUSE：说明 mock 已在运行（多半是调试期留下的，且多半没带延迟）。
-#     **不要重复启动，也不要 pkill**——旧进程若计数已污染或缺延迟，需重启才能重来；
-#     处置见 §5.1.2。`curl` 能通只说明旧进程在服务，须核对上行的 latencyMs。
-
-# ③ 夹具：13 块暂存改动（1 敏感路径 + 12 低风险）
-cd ~/dev/sonedemo && git reset -q
-printf 'export function login() {\n  if (!token) return null;\n  return true;\n}\n' > src/auth/login.ts
-for i in $(seq -w 1 12); do printf 'export function util%s(a) {\n  return a + %s;\n}\n' "$i" "$i" > "src/utils/util$i.js"; done
-git add src/ && git --no-pager diff --staged --stat | tail -1
-#   ↑ 期望 13 files changed
-#   ⚠️ 用 git add src/ 而非 git add -A：后者会把④ 创建的 .vscode/ 也扫进暂存区，
-#      hunk 数变 14，且 .vscode/settings.json 排在清单首位（. < s）。重跑③ 就会复发。
-
-# ④ 工作区配置——必须执行，否则会打到真实 Jev 官方端点
-mkdir -p ~/dev/sonedemo/.vscode && printf '{\n  "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone",\n  "sonecheck.maxItems": 3,\n  "sonecheck.riskThreshold": 0.4\n}\n' > ~/dev/sonedemo/.vscode/settings.json && cat ~/dev/sonedemo/.vscode/settings.json
-#   ↑ 期望 cat 出三行：endpoint / maxItems 3 / riskThreshold 0.4
-#   ⚠️ 路径 /v1/systemone 不可省——normalizeEndpoint 只做协议与主机校验，不补路径。
-#      不配则用 JEV_ENDPOINT_DEFAULT（真官方端点），改动会被真发出去，回执是
-#      「Key 或配额不可用」——完全误导。
-#   ⚠️ 三项都要写：maxItems / riskThreshold 是为了压住用户级 settings.json 的遗留值，
-#      否则 #2 的 Top-K 判据不成立（见 §5.1.2）。
+pkill -f jev-mock/local.mjs
+sleep 0.5
+lsof -ti tcp:8787
 ```
 
-> 全部命令须在 VS Code 的 **`sonedemo` 窗口**内执行检查——扩展读的是当前窗口的工作区。
+**② 可能输出**
 
-### 5.1.1 开跑前的三个前置动作（顺序敏感，漏做会产生假阴性）
+R1 自身无输出。第二条命令**期望无输出**（没有进程占用 8787）。
 
-| 动作 | 为什么必须先做 |
+**③ 判断标准**
+
+- `lsof` 无输出 → ✅ 通过
+- 有一个 PID → mock 还在跑，**必须继续 R1**（`pkill` 有时需要多给一次）
+
+> 端口在 `sleep 0.5` 后即可复用（实测）。若后续 `/health` 仍报 `EADDRINUSE`，把这里的 `sleep` 加长到 1s。
+
+---
+
+#### R2 · 清空 sonedemo 的源码改动与暂存区
+
+**① 操作**
+
+```bash
+cd ~/dev/sonedemo
+git reset -q
+git checkout -- src/
+git clean -fdq src/
+git status --porcelain
+```
+
+**② 可能输出**
+
+```
+?? .vscode/
+```
+
+（只应有这一行。若为空也正常，说明 `.vscode/` 尚未创建。）
+
+**③ 判断标准**
+
+- 只剩 `?? .vscode/`，或完全为空 → ✅ 通过
+- 出现任何 `M ` / `A ` / `?? src/...` → ❌ 有残留，**检查 `git clean` 的路径是否写成了 `src/`**（不能写成仓库根，否则会删掉 `.vscode/`）
+
+---
+
+#### R3 · 写入工作区配置（三项契约默认值）
+
+**① 操作**
+
+```bash
+mkdir -p ~/dev/sonedemo/.vscode && printf '{\n  "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone",\n  "sonecheck.maxItems": 3,\n  "sonecheck.riskThreshold": 0.4\n}\n' > ~/dev/sonedemo/.vscode/settings.json && cat ~/dev/sonedemo/.vscode/settings.json
+```
+
+**② 可能输出**
+
+```json
+{
+  "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone",
+  "sonecheck.maxItems": 3,
+  "sonecheck.riskThreshold": 0.4
+}
+```
+
+**③ 判断标准**
+
+- 三项齐全 → ✅ 通过
+- **路径 `/v1/systemone` 不可省**——`normalizeEndpoint` 只校验协议与主机，**不补路径**。不配则回落到 `JEV_ENDPOINT_DEFAULT`（真官方端点），改动会被真发出去，回执是「Key 或配额不可用」，完全误导
+- `maxItems` / `riskThreshold` 必须显式写。调试期在**用户级** `settings.json` 留下的值（如 `maxItems: 20`、`riskThreshold: 0.2`）优先级**高于**工作区，不写就压不住，#2 的 Top-K 判据不成立
+
+---
+
+#### R4 · 清除 API Key（在 VS Code 内操作，无法用命令行）
+
+**① 操作**
+
+在 `sonedemo` 窗口：`Cmd+Shift+P` → `SoneCheck: Set Jev API Key` → **输入框留空**回车。
+
+**② 可能输出**（二选一）
+
+```
+SoneCheck: 已清除 Jev API Key          ← 之前配过：先弹二次确认，点「清除」
+SoneCheck: 未配置 API Key，无需清除      ← 本来就没配：不弹确认框
+```
+
+**③ 判断标准**
+
+- 出现上述任一 → ✅ Key 已清空
+- 若弹出二次确认，你点了**取消** → 提示「已保留原有 API Key」，Key 还在，**重做 R4**
+
+> 这一步必须在 A1 之前完成——A1 才是「配置」，本步骤是「清空」。顺序反了会把 A5 的取消分支验不到。
+
+---
+
+#### R5 · 重建夹具：13 块暂存改动
+
+**① 操作**
+
+```bash
+cd ~/dev/sonedemo
+printf 'export function login() {\n  if (!token) return null;\n  return true;\n}\n' > src/auth/login.ts
+for i in $(seq -w 1 12); do printf 'export function util%s(a) {\n  return a + %s;\n}\n' "$i" "$i" > "src/utils/util$i.js"; done
+git add src/
+git --no-pager diff --staged --stat | tail -1
+```
+
+**② 可能输出**
+
+```
+ 13 files changed, 37 insertions(+)
+```
+
+**③ 判断标准**
+
+- **恰好 13 files changed** → ✅ 通过
+- 若是 14 → ❌ `.vscode/settings.json` 被卷进暂存区。原因只会是 `git add -A`——**必须写 `git add src/`**。一旦误加，`.vscode/settings.json` 还会按 `filePath` 升序排在清单**首位**（`.` 的 ASCII 码小于 `s`）
+- 若是 12 或更少 → 夹具生成中断，检查 `src/utils/` 下是否真有 12 个文件
+
+---
+
+#### R6 · 起 mock（带 100ms 延迟、无故障、计数归零）
+
+**① 操作**
+
+```bash
+cd /Users/woo/dev/sonecheck
+MOCK_LATENCY_MS=100 PORT=8787 node tools/jev-mock/local.mjs >/tmp/mock.log 2>&1 &
+sleep 1
+curl -s http://127.0.0.1:8787/health
+curl -s http://127.0.0.1:8787/stats
+```
+
+**② 可能输出**
+
+```
+{"ok":true,"model":"jev-1.13.0",...,"latencyMs":100,"defaultFault":null}
+{"total":0,"byFault":{},"inFlight":{"current":1,"peak":1},"lastRequest":null,...}
+```
+
+**③ 判断标准**
+
+| 字段 | 必须 | 不对说明什么 |
+|---|---|---|
+| `latencyMs` | `100` | 为 `0` 时请求瞬间完成、`inFlight` 永不重叠，#7 的 `peak>1` **在物理上不可能成立**（实测 `latencyMs=0` → `peak=1`；`latencyMs=100` → `peak=13`） |
+| `defaultFault` | `null` | 非 null 表示还带着故障预设，所有检查都会降级 |
+| `total` | `0` | 非 0 说明进程未真正重启，计数带历史值 |
+| `inFlight.peak` | `≤ 1` | `= 1` 通常是 `/stats` 请求**自身**贡献的（`inFlight` 在 `route` 之前自增，而 `/health`、`/stats` 的早返回在 `route` 之内）。这是 mock 的已知噪音，不影响结论，修复留待 S7 之后 |
+
+---
+
+#### R7 · 重载窗口 + 取工作区基线快照
+
+**① 操作**
+
+第一步（GUI）：`Cmd+Shift+P` → `Developer: Reload Window` → 回车。
+
+第二步（终端）：
+
+```bash
+cd ~/dev/sonedemo && git status --porcelain > /tmp/before.txt && cat /tmp/before.txt
+```
+
+**② 可能输出**
+
+```
+?? .vscode/
+A  src/auth/login.ts
+A  src/utils/util01.js
+... (共 13 行 A)
+```
+
+**③ 判断标准**
+
+- `/tmp/before.txt` 已生成，内容 = R2 时的状态 + 13 块暂存 → ✅ 通过。A4 要拿它比对
+- `Reload Window` 执行过 → 引导闩锁已重置，A6 的「首次出现引导」才可能重现
+
+---
+
+### 5.3 验收步骤
+
+> **步骤顺序不可调换**，两类原因：
+>
+> 1. **A3（并发取证）必须先于 A7（降级循环）**。A7 的循环每轮 `pkill` 并重启 mock，而 `inFlight` 与 `requestCounts` 是 `handler.mjs` 的**模块级变量**，进程重启即归零——并发峰值证据一旦被循环冲掉就永久丢失。
+> 2. **A5（清除）必须先于 A6（宽限）**。A6 的「未配 Key」状态正是 A5 清除动作的结果，两者共用同一段连续操作，只是判据点不同。
+>
+> A5 / A6 不发请求（`NO_KEY` 在决策调用前短路），故不受 mock 重启影响。
+
+---
+
+#### A1 · #1 Key 配置与保密
+
+**① 操作**
+
+`Cmd+Shift+P` → `SoneCheck: Set Jev API Key` → 输入 `apikey_local_mock_placeholder` → 回车。
+
+**② 可能输出**
+
+```
+SoneCheck: 已保存 Jev API Key
+```
+
+**③ 判断标准**
+
+- 出现该提示 → ✅ 通过
+- **Key 不明文回显**：输入框是密码样式（显示圆点），提示里只有「已保存」不含 Key 值
+- 落盘位置核对：`grep -r apikey_local_mock_placeholder ~/dev/sonedemo` 应**无结果**——Key 只在 SecretStorage（macOS 上即系统钥匙串），不在项目文件、不在 `settings.json`
+- 判据：`03` `INV-03` / `API-03`
+
+---
+
+#### A2 · #2 真实判定链路
+
+**① 操作**
+
+`Cmd+Shift+P` → `SoneCheck: Inspect Staged Diff`。
+
+**② 可能输出**
+
+弹出清单，**恰好 3 条**：
+
+```
+[0.90] src/auth/login.ts:1 · 鉴权边界
+[0.90] src/utils/util01.js:1 · 鉴权边界
+[0.90] src/utils/util02.js:1 · 鉴权边界
+```
+
+点任意一条 → 打开对应文件，光标跳到该行。
+
+**③ 判断标准**
+
+| 现象 | 判断 |
 |---|---|
-| `Cmd+Shift+P` → **`Developer: Reload Window`** | 验收 3 期望「首次出现引导」。引导闩锁 `createSessionGuide()` 是 `registerCommands` 内的**内存闭包，每窗口一份、只随窗口重载重置**。调试期若已跑过未配 Key 的检查，闩锁已被 claim，引导不再重现——会被误判成功能缺陷 |
-| 取工作区快照 `cd ~/dev/sonedemo && git status --porcelain > /tmp/before.txt` | 验收 8 要比对前后两次快照。中途若在编辑器里改了文件，比对必然失败，而失败原因与扩展无关 |
-| 核对 mock 计数是否干净（§5.1.2） | `/stats` 的 `total` / `inFlight.peak` 只随进程重启归零。调试期已产生请求时，验收 #6 / #7 的取证会带上无法解释的历史值 |
+| **恰好 3 条**，首行是 `src/auth/login.ts:1` | ✅ 通过 |
+| 13 条全出| ❌ `maxItems` 被覆盖（检查 R3 与用户级 `settings.json`） |
+| 首行是 `.vscode/settings.json` | ❌ R5 误用了 `git add -A` |
+| 标签不是「鉴权边界」 | ❌ `reasonCode` 未从响应 `choice` 正确归一 |
+| 点条目跳错行 / 报错 | ❌ `INV-06` 定位失效 |
 
-### 5.1.2 计数归零（`/stats` 不干净时才需要）
+**为什么是这 3 条**：mock 是确定性的，13 个 hunk 全部返回 `noul = 0.90` ≥ 阈值 `0.40`，所以 13 块**全部命中**；但 `sonecheck.maxItems = 3` 只留前 3。排序为 `score` desc → `filePath` asc → `line` asc，13 条同为 `0.90` 并列，故按文件名字典序取前三个。
+
+判据：`200-spec` §2 第 3 行 / `constants.ts` `MAX_ITEMS`
+
+---
+
+#### A3 · #7 并发与性能
+
+**① 操作**
+
+在 A2 的清单弹出后**直接关掉**，**连续跑 3 轮** `Inspect Staged Diff`，然后：
 
 ```bash
 curl -s http://127.0.0.1:8787/stats
 ```
 
-期望 `total: 0`、`byFault: {}`、`inFlight.peak ≤ 1`。
+**② 可能输出**
 
-> `peak = 1` 通常是 `/stats` 请求**自身**贡献的——`inFlight` 在 `route` 之前自增，而 `/health` 与 `/stats` 的早返回分支在 `route` 之内，因此这两个控制面请求也被计入并发峰值（`total` 不受影响，它只在 `/v1/systemone` 分支自增）。这是 mock 的已知噪音，**不影响 #7 的结论**（13 块真实请求必然把峰值推到 4）。修复留待 S7 之后，不在本版范围内。
+```json
+{"total":39,"byFault":{"none":39},"inFlight":{"current":1,"peak":4},...}
+```
 
-**同时核对两件容易被忽略的事**：
+**③ 判断标准**
 
-| 检查 | 怎么看 | 不对时 |
+| 字段 | 判据 | 含义 |
 |---|---|---|
-| **用户级配置是否覆盖了工作区默认值** | `grep sonecheck ~/Library/Application\ Support/Code/User/settings.json` | 调试期遗留值（如 `maxItems: 20`、`riskThreshold: 0.2`）会**盖过**工作区 `settings.json`，使 #2 的 Top-K 与阈值判据不成立。工作区级优先级更高，故④ 已显式写入契约默认值 |
-| **mock 是否带延迟** | `/health` 上行的 `latencyMs` 须为 `100` | 为 `0` 时 #7 的 `peak > 1` 在物理上不可能成立（见 ② 的注记） |
+| `inFlight.peak` | **= 4**（既 `≤ 4` 又 `> 1`） | 并发编排生效，且不超 `MAX_CONCURRENCY` |
+| `total` | **= 39**（3 轮 × 13 块） | 每轮 13 个 hunk 各发一次，无重试 |
+| `byFault.none` | 39 | 全部成功，无失败混入 |
+| 体感 | 单轮 ≈ `13 ÷ 4 × 100ms ≈ 400ms` | 明显快于串行的 1.3s |
 
-不干净时才重启（重启会让 §5.3 尚未完成的取证一并失效，故只在开始前做）：
+- `peak = 4` 且 `total = 39` → ✅ 通过
+- `peak = 1` → ❌ 两种可能：(a) R6 的 `MOCK_LATENCY_MS` 没生效（回查 `/health`）；(b) 并发编排确实失效。真要区分：带延迟时仍为 1 才是 (b)
+- `peak > 4` → ❌ 并发上限被突破
+- `total ≠ 39` → ❌ 有重试或漏发，回查 §5.5 的证据字段
+
+判据：`02` §4 / `MAX_CONCURRENCY`
+
+---
+
+#### A4 · #8 工作区只读
+
+**① 操作**
+
+```bash
+cd ~/dev/sonedemo
+git status --porcelain > /tmp/after.txt
+diff /tmp/before.txt /tmp/after.txt && echo "✅ 工作区未变"
+git --no-pager diff --staged --stat | tail -1
+```
+
+**② 可能输出**
+
+```
+✅ 工作区未变
+ 13 files changed, 37 insertions(+)
+```
+
+**③ 判断标准**
+
+- `diff` 无差异（打印 `✅ 工作区未变`）**且**暂存区仍是 13 → ✅ 通过
+- 有差异 → ❌ 检查期间改动了工作区。若差异只在你自己新建的文件上，说明不是扩展的责任；否则是 `INV-05` 被破坏
+
+> 中途若在 VS Code 里编辑过文件，这一步必然失败——与扩展无关，重取基线即可。
+
+判据：`INV-05`
+
+---
+
+#### A5 · #4 Key 清除
+
+**① 操作**
+
+`Cmd+Shift+P` → `SoneCheck: Set Jev API Key` → **留空**回车 → 在二次确认框点**「取消」**。
+
+然后**再跑一次**同样命令 → 留空回车 → 点**「清除」**。
+
+**② 可能输出**
+
+第一次：弹确认框「输入为空：确定清除已保存的 Jev API Key 吗？」→ 点取消 → `SoneCheck: 已保留原有 API Key`
+
+第二次：同一确认框 → 点清除 → `SoneCheck: 已清除 Jev API Key`
+
+**③ 判断标准**
+
+| 分支 | 判据 |
+|---|---|
+| 取消后 Key 仍在 | ✅ `ERR-10` / `ERR-11`：留空必须**先弹二次确认**，拒绝则原值保留 |
+| 确认后 Key 已空 | ✅ 清除生效 |
+| 留空后**直接**就清掉了、没弹确认 | ❌ 未经确认即删除，是缺陷 |
+| 若本来就没配 Key | 显示「未配置 API Key，无需清除」且**不弹确认框**——这是第三条合法分支 |
+
+判据：`ERR-11` / `ERR-10`
+
+---
+
+#### A6 · #3 未配 Key 宽限
+
+**① 操作**
+
+承接 A5 的清除结果（Key 现在是空的），跑第一次 `Inspect Staged Diff`；**再跑第二次**。
+
+**② 可能输出**
+
+**第一次**：右上角信息通知「SoneCheck 需要 Jev API Key 才能判定改动风险」+ 按钮「设置 Key」；同时状态栏（左下）短暂显示 `SoneCheck: 未配置 Key`（约 2 秒）
+
+**第二次**：**只有**状态栏 `SoneCheck: 未配置 Key`，引导通知**不再出现**
+
+**③ 判断标准**
+
+| 现象 | 判断 |
+|---|---|
+| 第一次有引导 + 状态栏；第二次只有状态栏 | ✅ `ADR-006` / `ERR-08` 通过 |
+| 不弹清单、不进错误色（状态栏是普通色，非黄色告警） | ✅ 宽限不是故障 |
+| 两次都不弹清单 | ✅ `INV-01` 未被违反 |
+| 引导每次都出现 | ❌ 会话级一次性闩锁失效 |
+| 引导**一次都没出现** | ❌ R7 的 `Reload Window` 没做（闩锁已被此前的调试占用） |
+| 出现错误色 / 错误弹窗 | ❌ 宽限被当成故障处理 |
+
+> 状态栏是 2 秒瞬时的，**要盯着看**。归因不在这里——这里只判「有没有引导」和「是错误色还是普通色」。
+
+判据：`ADR-006` / `ERR-08`
+
+#### A7 · #5 降级全谱 + #6 重试与超时
+
+> 本步是**唯一需要逐轮人工观察**的一步，共 8 轮。先重新配好 Key（A6 已把 Key 清掉），再执行循环。
+
+**① 操作**
+
+第一步（GUI）：`Cmd+Shift+P` → `SoneCheck: Set Jev API Key` → 输入 `apikey_local_mock_placeholder` → 回车，确认出现「已保存」。
+
+第二步（终端）：**整块粘贴**执行 §5.4 的循环。每轮提示你跑一次检查，读完 `/stats` 后按回车继续。
+
+**② 可能输出**
+
+每轮终端会打印本轮的期望文案与 `/stats`，例如：
+
+```
+── 现在在 VS Code 里跑一次 Inspect Staged Diff，期望右上角通知弹窗：
+   SoneCheck: 已跳过 13 块改动（网络不可达）
+── 上游侧证据（必须在下一轮 pkill 之前读）：
+{"total":13,"byFault":{"disconnect":13},"inFlight":{"current":1,"peak":4},...}
+按回车继续 →
+```
+
+VS Code 侧每轮出现**两个通道**：
+
+| 通道 | 位置 | 内容 |
+|---|---|---|
+| 状态栏 | 左下，黄色，2 秒瞬时 | `SoneCheck: 已跳过`（**不含原因**） |
+| **通知弹窗** | 右上⚠️ | `SoneCheck: 已跳过 13 块改动（<原因>）` |
+
+**③ 判断标准**
+
+**界面侧**：八个故障每个都满足
+
+- ✅ 弹出通知弹窗，文案与 §5.4 对照表**逐字一致**
+- ✅ **不弹清单**、**不阻断**（照常能继续提交）
+- ✅ 状态栏显示「已跳过」且为黄色告警底色
+- ❌ **只盯状态栏会误判**——归因标签只出现在弹窗里，状态栏一律只有「已跳过」四字
+
+**上游侧**（每轮的 `/stats`）：与 §5.4 对照表最后一列一致
+
+| 故障 | `byFault` 期望 | 错误码 | 归因标签 |
+|---|---|---|---|
+| `disconnect` | `disconnect = 13` | `ERR-01` | 网络不可达 |
+| `timeout` | `timeout = 13`（超时不重试） | `ERR-02` | 服务超时 |
+| `http500` | `http500 = 13` | `ERR-03` | 服务异常 |
+| `unauthorized` | `unauthorized = 13` | `ERR-04` | Key 或配额不可用 |
+| `forbidden` | `forbidden = 13` | `ERR-04` | Key 或配额不可用 |
+| `rate429` | **`rate429 = 26`** ← #6 硬证据 | `ERR-04` | Key 或配额不可用 |
+| `rate529` | **`rate529 = 26`** ← #6 硬证据 | `ERR-04` | Key 或配额不可用 |
+| `badschema` | `badschema = 13` | `ERR-05` | 响应不合规 |
+
+- ✅ 全部 8 轮界面与计数**都对得上** → #5 与 #6 同时通过
+- ❌ `http500` 显示「网络不可达」而非「服务异常」→ 归因串了，`ERR-01` 与 `ERR-03` 混淆
+- ❌ `rate429` 计数不是 26 → 重试策略不对（应为恰好重试 1 次，退避 150ms）
+- ❌ 任一轮出现未捕获异常、清单弹出、或阻断操作 → `INV-04` 被破坏
+
+判据：`200-spec` §2 第 4 行 / `INV-04` / `03` §2.1 重试策略
+
+---
+
+#### A8 · 恢复环境
+
+**① 操作**
 
 ```bash
 pkill -f jev-mock/local.mjs; sleep 0.5
-MOCK_LATENCY_MS=100 PORT=8787 node tools/jev-mock/local.mjs &
-sleep 1; curl -s http://127.0.0.1:8787/stats
+cd /Users/woo/dev/sonecheck
+MOCK_LATENCY_MS=100 PORT=8787 node tools/jev-mock/local.mjs >/tmp/mock.log 2>&1 &
+sleep 1; curl -s http://127.0.0.1:8787/health
 ```
 
-> 端口在 `sleep 0.5` 后即可复用（实测）。若仍 `EADDRINUSE`，把 `sleep` 加长到 1s。
+**② 可能输出**
 
-### 5.2 逐项操作与期望
+```
+{"ok":true,"model":"jev-1.13.0",...,"latencyMs":100,"defaultFault":null}
+```
 
-> **本表已按执行顺序排列，照着从上往下做即可**，无需再自己排序。`序` 是操作次序，`#` 是验收项编号（对应 §2 判据表与 §5.5 记录表）——两者不同是因为存在两类顺序依赖：
+**③ 判断标准**
+
+- `defaultFault` 回到 `null` → ✅ 环境已复原，验收结束
+- 仍为某个故障名 → R1 / R6 走漏了
+
+---
+
+### 5.4 降级全谱循环脚本
+
+扩展的普通请求**不带故障头**，故降级必须由**端点侧预设**（`MOCK_FAULT`）才能复现。
+
+> **必须整块粘贴。** 这是 `for` 循环，逐行敲只会跑一半。
 >
-> 1. **并发取证（#7）必须先于降级循环（#5、#6）**。§5.3 的循环每轮 `pkill` 并重启 mock，而 `inFlight` 与 `requestCounts` 是 `handler.mjs` 的**模块级变量**，进程重启即归零——并发峰值证据一旦被循环冲掉就永久丢失。
-> 2. **#4 必须先于 #3**。#3 的「未配 Key」状态正是 #4 清除动作的结果，两者共用同一段连续操作，只是判据点不同。
->
-> #3 / #4 不发请求（`NO_KEY` 在决策调用前短路），故不受 mock 重启影响。
-
-| 序 | # | 验收项 | 操作 | 期望结果 | 判据 |
-|---|---|---|---|---|---|
-| 1 | #1 | Key 配置与保密 | `SoneCheck: Set Jev API Key` → 输入 `apikey_local_mock_placeholder` | 提示「已保存 Jev API Key」；工作区与 settings **无明文** | `03` `INV-03` / `API-03` |
-| 2 | #2 | 真实判定链路 | 跑 `SoneCheck: Inspect Staged Diff` | 清单弹出，且**恰好 3 条**——13 块全部命中阈值（mock 恒返回 `0.90` ≥ `0.4`），但只留前 3（`sonecheck.maxItems = 3`）。排序为 `score` desc → `filePath` asc → `line` asc，13 条同为 `0.90` 并列，故依次为 `[0.90] src/auth/login.ts:1`、`[0.90] src/utils/util01.js:1`、`[0.90] src/utils/util02.js:1`，均带 ` · 鉴权边界`；点击跳到对应行。⚠️ 前提是④ 已写入工作区 `maxItems: 3`——用户级 settings.json 的遗留值会盖过它（§5.1.2）。清单里**若出现 `.vscode/settings.json`**，说明③ 误用了 `git add -A` | `200-spec` §2 第 3 行 / `constants.ts` `MAX_ITEMS` |
-| 3 | #7 | 并发与性能 | 13 块**连跑 3轮**（每轮关掉清单），然后读 `/stats` | `inFlight.peak` = **4**（既 `≤ 4` 又 `> 1`）；`total` = **39**（3 × 13）。⚠️ 必须先确认 mock 带 `MOCK_LATENCY_MS=100`——延迟为 0 时请求瞬间完成、inFlight 永不重叠，`peak > 1` 在物理上不可能成立（实测 `latencyMs=0` → `peak=1`，`latencyMs=100` → `peak=13`）。单轮耗时 ≈ `13 ÷ 4 × 100ms ≈ 400ms` | `02` §4 / `MAX_CONCURRENCY` |
-| 4 | #8 | 工作区只读 | 跑 `git status --porcelain > /tmp/after.txt`，与 §5.1.1 取的 `/tmp/before.txt` 比对 | 两次输出**完全一致**（检查不得改动工作区）；暂存区仍是 `13 files changed`，`.vscode/` 仍为 `??` 未跟踪 | `INV-05` |
-| 5 | #4 | Key 清除 | `setApiKey` → 留空回车 → 确认框点**取消**；再跑一次 → 留空回车 → 点**清除** | 取消分支：提示「已保留原有 API Key」，Key 仍在。清除分支：提示「已清除 Jev API Key」。两次都**先弹二次确认**才动存储（`ERR-11`）；若本来就没配 Key，则提示「未配置 API Key，无需清除」且**不弹确认框** | `ERR-11` / `ERR-10` |
-| 6 | #3 | 未配 Key 宽限 | 承接上一步的清除结果，跑检查 → **再跑一次** | 清除后首次：一次性引导（带「设置 Key」按钮）+ 状态栏 `未配置 Key`（2 秒瞬时）；第二次：**仅**状态栏，引导不再出现。两次都**不弹清单、不进错误态、不发任何请求**。⚠️ 依赖 §5.1.1 的 `Reload Window`，否则引导不出现 | `ADR-006` / `ERR-08` |
-| 7 | #5 | 降级全谱 | 按 §5.3 循环逐个故障观察；**须先重新配好 Key**（上一步已清除） | **两个通道都要看**：① 状态栏（左下，黄色，2 秒瞬时）`SoneCheck: 已跳过`；② **通知弹窗**（右上 ⚠️）`SoneCheck: 已跳过 13 块改动（<原因>）`。**归因标签只出现在弹窗里，状态栏不含原因**——只盯状态栏会误判「降级文案没生效」。八个故障各自映射到正确标签；每次都**不弹清单、不阻断**、退出码正常 | `200-spec` §2 第 4 行 / `INV-04` / `ui/status.ts` |
-| 8 | #6 | 重试与超时 | §5.3 循环中的 `rate429` / `rate529` 两轮 | 用户侧无差别；**在该轮 `pkill` 之前**读 `/stats`：`byFault.rate429` = **块数 × 2 = 26**（1 次 + 1 次重试），`rate529` 同理。其余六种故障各 = 13 | `03` §2.1 重试策略 |
-| 9 | — | 恢复环境 | `pkill -f jev-mock/local.mjs` 后按 §5.1 ② 重起 | `/health` 恢复 `ok:true` | — |
-
-### 5.3 降级全谱引导循环
-
-扩展的普通请求不带故障头，故降级需由**端点侧预设**（`MOCK_FAULT`）。逐个观察、逐个确认。
-
-循环脚本已内置**每轮取证**：`pkill` 会重启 mock 进程，而 `requestCounts` / `inFlight` 是 `handler.mjs` 的模块级变量，重启即归零——所以 `/stats` 必须在**本轮 `pkill` 之前**读，攒到最后一起读是拿不到重试次数的。
+> 脚本已把 `/stats` 取证内联到每轮——`pkill` 会重启 mock，而 `requestCounts` / `inFlight` 是 `handler.mjs` 的模块级变量，重启即归零。**攒到循环结束再读 `/stats` 是拿不到重试次数的**（只能看到最后一轮）。
 
 ```bash
 cd /Users/woo/dev/sonecheck
@@ -211,24 +591,26 @@ for f in disconnect timeout http500 unauthorized forbidden rate429 rate529 badsc
 done
 ```
 
-> `disconnect` 与 `http500` 在旧版脚本里合写成一行「网络不可达 / 服务异常」，但两者归因**不同**（`ERR-01` / `ERR-03`，标签也不同），已按上表拆开——照旧版执行会把两个不同标签看成一个。
->
+> **故障轮次不注入 `MOCK_LATENCY_MS`**——降级观察的是文案与归因，不需要延迟。缺延迟时 `inFlight.peak` 会是 1，属预期，不影响本步判据。
+
+**故障 → 上游状态对照**
+
+| 注入故障 | 上游状态 | 期望归因标签 | 错误码 |
+|---|---|---|---|
+| `disconnect` | 连接被切断 | 网络不可达 | `ERR-01` |
+| `timeout` | 挂起 3s | 服务超时 | `ERR-02` |
+| `http500` | `500` | 服务异常 | `ERR-03` |
+| `unauthorized` | `401` | Key 或配额不可用 | `ERR-04` |
+| `forbidden` | `403` | Key 或配额不可用 | `ERR-04` |
+| `rate429` | `429`（重试 1 次） | Key 或配额不可用 | `ERR-04` |
+| `rate529` | `529`（重试 1 次） | Key 或配额不可用 | `ERR-04` |
+| `badschema` | `200` 但不合规 | 响应不合规 | `ERR-05` |
+
 > 文案来自 `describeDegraded`：前缀 `SoneCheck: ` + `已跳过 N 块改动（原因、原因）`。13 块同类失败时括号内只有**一个**原因（`degraded` 已按 code 归并计数），不是 13 次重复。
+>
+> `disconnect` 与 `http500` 极易看混——前者「网络不可达」，后者「**服务异常**」。两者错误码不同（`ERR-01` / `ERR-03`）。
 
-| 注入故障 | 上游状态 | 期望归因标签 | 对应错误码 | `/stats` 取证 |
-|---|---|---|---|---|
-| `disconnect` | 连接被切断 | 网络不可达 | `ERR-01` | `byFault.disconnect = 13`，`inFlight.peak = 4` |
-| `timeout` | 挂起 3s | 服务超时 | `ERR-02` | `byFault.timeout = 13`（超时不重试） |
-| `http500` | `500` | 服务异常 | `ERR-03` | `byFault.http500 = 13` |
-| `unauthorized` | `401` | Key 或配额不可用 | `ERR-04` | `byFault.unauthorized = 13` |
-| `forbidden` | `403` | Key 或配额不可用 | `ERR-04` | `byFault.forbidden = 13` |
-| `rate429` | `429`（重试 1 次） | Key 或配额不可用 | `ERR-04` | `byFault.rate429 = 26` ← **验收 6 的硬证据** |
-| `rate529` | `529`（重试 1 次） | Key 或配额不可用 | `ERR-04` | `byFault.rate529 = 26` |
-| `badschema` | `200` 但不合规 | 响应不合规 | `ERR-05` | `byFault.badschema = 13` |
-
-> 故障态下 `inFlight.peak` 仍应为 4 —— 请求已发出才失败，并发上限与故障无关。若在故障轮次测出 `peak = 1`，说明并发编排未生效，属缺陷而非预期。
-
-### 5.4 上游侧客观证据（字段说明与取证时机）
+### 5.5 证据字段说明（`/stats`）
 
 ```bash
 curl -s http://127.0.0.1:8787/stats
@@ -236,27 +618,29 @@ curl -s http://127.0.0.1:8787/stats
 
 | 字段 | 含义 | 判据 |
 |---|---|---|
-| `inFlight.peak` | 并发峰值 | **≤ 4 且 > 1**（`MAX_CONCURRENCY = 4`） |
-| `byFault.rate429` / `byFault.rate529` | 限流/过载计数 | 各 = **26**（13 块 × 2 次） |
+| `inFlight.peak` | 并发峰值 | A3 中 = **4**；A7 故障轮次为 `1`（无延迟，属预期） |
+| `byFault.rate429` / `rate529` | 限流 / 过载计数 | 各 = **26**（13 块 × 2 次） |
 | `byFault.<其他>` | 各自故障计数 | = 13 |
 | `total` | 总请求数 | 与各 `byFault` 之和一致 |
 | `lastRequest` | 最近一次**请求体** | 断言其中**不含 Key**（mock 只记 body 不记 header，`INV-03`） |
 
-> **取证时机**：这是 §5.3 每轮的内联动作，不是收尾步骤。所有计数都随 mock 进程重启归零，跨进程累积读取必然失真。收口时 AI 读取的是**累计报告**，不是现场重读。
+> **取证时机**：这是 A7 每轮的**内联动作**，不是收尾步骤。所有计数都随 mock 进程重启归零，跨进程累积读取必然失真。收口时 AI 读取的是**累计报告**，不是现场重读。
 
-### 5.5 验收记录（收口时填写）
+### 5.6 验收记录（收口时填写）
 
-> 按**执行顺序**排列，与 §5.2 一致；`#` 列对应 §2 判据表与 Issue #3 的清单。
+> `序` 对应 §5.3 的步骤编号；`#` 对应 §2 判据表与 Issue #3 的清单。
 
 | 序 | # | 验收项 | 结果 | 证据 / 备注 |
 |---|---|---|---|---|
-| 1 | #1 | Key 配置与保密 | ☐ | |
-| 2 | #2 | 真实判定链路 | ☐ | |
-| 3 | #7 | 并发与性能 | ☐ | |
-| 4 | #8 | 工作区只读 | ☐ | |
-| 5 | #4 | Key 清除 | ☐ | |
-| 6 | #3 | 未配 Key 宽限 | ☐ | |
-| 7 | #5 | 降级全谱（8 故障） | ☐ | |
-| 8 | #6 | 重试与超时 | ☐ | |
+| R1~R7 | — | Reset 到标准态 | ☐ | |
+| A1 | #1 | Key 配置与保密 | ☐ | |
+| A2 | #2 | 真实判定链路 | ☐ | |
+| A3 | #7 | 并发与性能 | ☐ | |
+| A4 | #8 | 工作区只读 | ☐ | |
+| A5 | #4 | Key 清除 | ☐ | |
+| A6 | #3 | 未配 Key 宽限 | ☐ | |
+| A7 | #5 | 降级全谱（8 故障） | ☐ | |
+| A7 | #6 | 重试与超时 | ☐ | |
+| A8 | — | 恢复环境 | ☐ | |
 
 > **范围外**：Marketplace 上架（待 `VSCE_PAT`）与真实端点校准（待 Jev Key，`ADR-007` 挂账）——两者均 `[DEFERRED]`，不阻塞本版收口。
