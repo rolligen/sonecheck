@@ -92,9 +92,11 @@
 | 块类型 | 怎么执行 |
 |---|---|
 | 独立命令块（步骤 A1~A6 里的 bash） | **逐行敲**，或先删掉所有 `#` 行再整块粘贴 |
-| 循环块（§5.4） | **必须整块粘贴**，否则只跑一半 |
+| 降级循环 | **不要复制**——直接运行 `./tools/jev-mock/preview-failures.sh`（见 §5.4） |
 
 > `#` 开头是写给人看的注释，不是命令。整块粘贴到 zsh 会被当命令执行，报 `command not found: #`。这报错**无害**（zsh 不会因单行失败中止），但会**掩盖真实失败**，让人误以为前面的步骤没跑。
+
+> **本节唯一需要交互的循环已落成脚本**，正是为了消灭粘贴风险——内联的 `for` 循环整块粘贴时，一旦某行报错（如 `read` 在 zsh 下的提示语法），整个循环会被中断，而中断点之后的轮次全部漏跑。
 
 > **全部检查必须在 `sonedemo` 窗口内执行**——扩展读的是当前窗口的工作区。
 
@@ -375,7 +377,20 @@ SoneCheck: 已保存 Jev API Key
 
 **① 操作**
 
-在 A2 的清单弹出后**直接关掉**，**连续跑 3 轮** `Inspect Staged Diff`，然后：
+在 A2 的清单弹出后**直接关掉**，**连续跑 3 轮** `Inspect Staged Diff`。
+
+> ⚠️ **开始前先把计数归零**——A2 已消耗 13 个请求，不归零则 `total` 判据不成立：
+>
+> ```bash
+> cd /Users/woo/dev/sonecheck
+> pkill -f jev-mock/local.mjs; sleep 0.5
+> MOCK_LATENCY_MS=100 PORT=8787 node tools/jev-mock/local.mjs >/tmp/mock.log 2>&1 &
+> sleep 1; curl -s http://127.0.0.1:8787/stats
+> ```
+>
+> 期望 `total: 0`、`peak ≤ 1`。
+
+跑完后读计数：
 
 ```bash
 curl -s http://127.0.0.1:8787/stats
@@ -392,14 +407,14 @@ curl -s http://127.0.0.1:8787/stats
 | 字段 | 判据 | 含义 |
 |---|---|---|
 | `inFlight.peak` | **= 4**（既 `≤ 4` 又 `> 1`） | 并发编排生效，且不超 `MAX_CONCURRENCY` |
-| `total` | **= 39**（3 轮 × 13 块） | 每轮 13 个 hunk 各发一次，无重试 |
-| `byFault.none` | 39 | 全部成功，无失败混入 |
+| `total` | **= 13 × N**（N = 实际轮数，3 轮 → 39），且 **`total % 13 == 0`** | 每轮 13 个 hunk 各发一次，无重试、无漏发 |
+| `byFault.none` | 与 `total` 相等 | 全部成功，无失败混入 |
 | 体感 | 单轮 ≈ `13 ÷ 4 × 100ms ≈ 400ms` | 明显快于串行的 1.3s |
 
-- `peak = 4` 且 `total = 39` → ✅ 通过
+- `peak = 4` 且 `total = 13 × N` → ✅ 通过
 - `peak = 1` → ❌ 两种可能：(a) R6 的 `MOCK_LATENCY_MS` 没生效（回查 `/health`）；(b) 并发编排确实失效。真要区分：带延迟时仍为 1 才是 (b)
 - `peak > 4` → ❌ 并发上限被突破
-- `total ≠ 39` → ❌ 有重试或漏发，回查 §5.5 的证据字段
+- `total` 能否被 13 整除 → **不整除** = 有重试或漏发（每轮固定 13 个 hunk，多一个就是重试、少一个就是漏发）；**整除但不是 `13 × N` 且 N ≥ 2** = 归零步骤没做或轮数记错，重做本步第一步
 
 判据：`02` §4 / `MAX_CONCURRENCY`
 
@@ -496,7 +511,7 @@ git --no-pager diff --staged --stat | tail -1
 
 第一步（GUI）：`Cmd+Shift+P` → `SoneCheck: Set Jev API Key` → 输入 `apikey_local_mock_placeholder` → 回车，确认出现「已保存」。
 
-第二步（终端）：**整块粘贴**执行 §5.4 的循环。每轮提示你跑一次检查，读完 `/stats` 后按回车继续。
+第二步（终端）：**直接运行脚本**（见 §5.4），不要从文档复制循环块。
 
 **② 可能输出**
 
@@ -576,44 +591,33 @@ sleep 1; curl -s http://127.0.0.1:8787/health
 
 扩展的普通请求**不带故障头**，故降级必须由**端点侧预设**（`MOCK_FAULT`）才能复现。
 
-> **必须整块粘贴。** 这是 `for` 循环，逐行敲只会跑一半。
->
-> 脚本已把 `/stats` 取证内联到每轮——`pkill` 会重启 mock，而 `requestCounts` / `inFlight` 是 `handler.mjs` 的模块级变量，重启即归零。**攒到循环结束再读 `/stats` 是拿不到重试次数的**（只能看到最后一轮）。
+**执行方式：直接运行仓库里的脚本，不要从文档复制。**
 
 ```bash
 cd /Users/woo/dev/sonecheck
-for f in disconnect timeout http500 unauthorized forbidden rate429 rate529 badschema; do
-  pkill -f jev-mock/local.mjs; sleep 0.5
-  MOCK_FAULT=$f PORT=8787 node tools/jev-mock/local.mjs >/dev/null 2>&1 &
-  sleep 1
-  echo "── 现在在 VS Code 里跑一次 Inspect Staged Diff，期望右上角通知弹窗："
-  case $f in
-    disconnect)           echo "   SoneCheck: 已跳过 13 块改动（网络不可达）";;
-    http500)              echo "   SoneCheck: 已跳过 13 块改动（服务异常）";;
-    timeout)              echo "   SoneCheck: 已跳过 13 块改动（服务超时）";;
-    unauthorized|forbidden|rate429|rate529) echo "   SoneCheck: 已跳过 13 块改动（Key 或配额不可用）";;
-    badschema)            echo "   SoneCheck: 已跳过 13 块改动（响应不合规）";;
-  esac
-  echo "── 上游侧证据（必须在下一轮 pkill 之前读）："
-  curl -s http://127.0.0.1:8787/stats; echo
-  read -r "按回车继续 → "
-done
+./tools/jev-mock/preview-failures.sh
 ```
+
+脚本会自动 `cd` 到仓库根，逐轮重启带故障的 mock、打印该轮的期望文案与错误码、等你回车后读 `/stats`。
+
+> **为什么落成文件而不是文档内联**：内联块需要整块粘贴，而整块粘贴在 zsh 下会踩两类坑——① `#` 注释行被当命令执行；② `read` 的提示语法在 bash 与 zsh 之间不兼容。`read -r "按回车继续 → "` 在 bash 下被当成变量名而静默失败，在 **zsh 下直接报 `zsh: not an identifier: 按回车继续 →` 并中断整个循环**。脚本里改用 `printf` 输出提示 + `read -r _`，两种shell 行为一致（已过`bash -n` / `zsh -n` 语法校验）。
+>
+> 脚本把 `/stats` 取证内联到每轮——`pkill` 会重启 mock，而 `requestCounts` / `inFlight` 是 `handler.mjs` 的模块级变量，重启即归零。**攒到循环结束再读 `/stats` 是拿不到重试次数的**（只能看到最后一轮）。
 
 > **故障轮次不注入 `MOCK_LATENCY_MS`**——降级观察的是文案与归因，不需要延迟。缺延迟时 `inFlight.peak` 会是 1，属预期，不影响本步判据。
 
 **故障 → 上游状态对照**
 
-| 注入故障 | 上游状态 | 期望归因标签 | 错误码 |
-|---|---|---|---|
-| `disconnect` | 连接被切断 | 网络不可达 | `ERR-01` |
-| `timeout` | 挂起 3s | 服务超时 | `ERR-02` |
-| `http500` | `500` | 服务异常 | `ERR-03` |
-| `unauthorized` | `401` | Key 或配额不可用 | `ERR-04` |
-| `forbidden` | `403` | Key 或配额不可用 | `ERR-04` |
-| `rate429` | `429`（重试 1 次） | Key 或配额不可用 | `ERR-04` |
-| `rate529` | `529`（重试 1 次） | Key 或配额不可用 | `ERR-04` |
-| `badschema` | `200` 但不合规 | 响应不合规 | `ERR-05` |
+| 注入故障 | 上游状态 | 期望归因标签 | 错误码 | `/stats` 期望 |
+|---|---|---|---|---|
+| `disconnect` | 连接被切断 | 网络不可达 | `ERR-01` | `byFault.disconnect = 13` |
+| `timeout` | 挂起 3s | 服务超时 | `ERR-02` | `byFault.timeout = 13`（超时不重试） |
+| `http500` | `500` | 服务异常 | `ERR-03` | `byFault.http500 = 13` |
+| `unauthorized` | `401` | Key 或配额不可用 | `ERR-04` | `byFault.unauthorized = 13` |
+| `forbidden` | `403` | Key 或配额不可用 | `ERR-04` | `byFault.forbidden = 13` |
+| `rate429` | `429`（重试 1 次） | Key 或配额不可用 | `ERR-04` | **`byFault.rate429 = 26`** ← #6 硬证据 |
+| `rate529` | `529`（重试 1 次） | Key 或配额不可用 | `ERR-04` | **`byFault.rate529 = 26`** |
+| `badschema` | `200` 但不合规 | 响应不合规 | `ERR-05` | `byFault.badschema = 13` |
 
 > 文案来自 `describeDegraded`：前缀 `SoneCheck: ` + `已跳过 N 块改动（原因、原因）`。13 块同类失败时括号内只有**一个**原因（`degraded` 已按 code 归并计数），不是 13 次重复。
 >
