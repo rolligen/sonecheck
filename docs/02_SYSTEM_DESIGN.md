@@ -41,7 +41,7 @@
 | `src/constants.ts` | 命名常量唯一集中处（判定阈值、payload 上限、构建期日志开关），纯数据无依赖 | 常量（只读） | 无逻辑 |
 | `src/ui/commands.ts` | 命令编排：读取配置 → 调 core → 分发结果给展示层 | `registerCommands()` | 私有 |
 | `src/ui/riskList.ts` | QuickPick 风险清单 + 条目跳转定位 | `showRiskList()` | 私有 |
-| `src/ui/status.ts` | 状态栏与一次性提示（All Clear / 降级提示） | `reportStatus()` | 私有 |
+| `src/ui/status.ts` | 状态栏与一次性提示（`idle` / `running` / `clear` / `empty` / `warning` / `no-key` 六态） | `createStatusReporter()` | 私有 |
 | `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K，并产出**检查报告**（清单 + 降级归因 + 宽限标记） | `inspect()` | 私有 |
 | `src/core/contextBuilder.ts` | 为每个 hunk 补上下文行，控制 payload ≤ 2KB | `buildContext()` | 私有 |
 | `src/core/threshold.ts` | 阈值判定与排序（RISK_THRESHOLD 常量，禁魔数） | `filterRisky()` | 私有 |
@@ -52,7 +52,8 @@
 | `src/infra/diffParser.ts` | diff 文本 → hunk 数组（文件、起始行、变更类型、内容；超长 hunk 按 payload 上限切分） | `parseDiff()` | 私有 |
 | `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `createJevClient()` / `IJevClient` / `decide()` / `buildJevRequest()` / `classifyHttpFailure()` | 私有 |
 | `src/infra/secrets.ts` | API Key 读写的**唯一出口**（VS Code SecretStorage；`INV-03`） | `hasApiKey()` / `getApiKey()` / `setApiKey()` / `clearApiKey()` | 私有 |
-| `src/infra/logger.ts` | `observe()` 包装器 + Output Channel 输出 | `observe()` / `log(event)` | 私有 |
+
+> **`infra/logger.ts` 尚未落地**：`observe()` 包装器与 Output Channel 输出属O2 结构化埋点，范围上顺延至 `v0.2.0`，故本版 `src/infra/` 下无该模块。§5 的观测要求在埋点落地前，只能由 T2 的上游侧计数（重试次数、并发峰值）与真机验收的 `/stats` 取证部分覆盖。
 
 > **极简暴露**：每模块仅经统一 Facade / 入口文件对外暴露，内部实现全部私有（见 `dev-meta/docs/09-ai-architecture-guide.md` §2）。
 > **判定服务抽象**：`core` 只依赖经 `src/infra/index.ts` 导出的 `IJevClient` 抽象，**禁止 import `infra/jevClient` 具体路径**；具体实现由装配层 `src/extension.ts` 在激活时注入，测试注入内存 stub 替换。
@@ -68,9 +69,10 @@
 | 步骤 | 发起方 | 接收方 | 数据 | 通信方式 |
 |------|--------|--------|------|----------|
 | 1 | 用户 | `ui/commands` | 触发命令 `sonecheck.inspectDiff` | 同步（VS Code 命令） |
-| 2 | `ui/commands` | `infra/configSource` | 读取原始配置与密钥可用性 | 同步（VS Code API） |
+| 2 | `ui/commands` | `infra/configSource` | 读取原始 workspace 配置 | 同步（VS Code API） |
 | 3 | `ui/commands` | `core/config` | 归一为 `SoneCheckConfig` | 同步（纯函数） |
 | 4 | `ui/commands` | `core/riskEngine` | 传入已归一配置，调用 `inspect(config)` | 同步（进程内） |
+| 4b | `core/riskEngine` | `infra/secrets` | 密钥可用性探测（`hasApiKey`）——**在切块之前**，未配 Key 时直接返回 `skipped: 'NO_KEY'`，优先于暂存区空/非 git 仓库等本地失败（`ADR-006`：先问「能不能判」再问「有没有可判的」） | 异步（SecretStorage） |
 | 5 | `core/riskEngine` | `infra/git` | 工作区根路径 | 同步（child_process） |
 | 6 | `infra/git` | `core/riskEngine` | 暂存区 diff 原始文本 | 同步（返回字符串） |
 | 7 | `core/riskEngine` | `infra/diffParser` | diff 文本 | 同步（纯函数） |
@@ -78,7 +80,11 @@
 | 9 | `core/riskEngine` | `infra/jevClient` | hunk payload 数组（并发上限 4） | 异步（HTTP，批量并发） |
 | 10 | `core/riskEngine` | `core/threshold` | 判定结果数组 | 同步（纯函数） |
 | 11 | `ui/commands` | `ui/riskList` / `ui/status` | Top-K 风险项 或 空集 | 同步（原生控件） |
-| 12 | `ui/riskList` | VS Code 编辑器 | 打开文件 + 定位行列 | 同步（VS Code API） |
+| 12 | `ui/riskList` | VS Code 编辑器 | 打开文件 + 光标定位到 hunk **起始行** | 同步（VS Code API） |
+
+> **定位粒度为行**：`RiskItem` 只承载 `startLine`，跳转时落在该行首列（`new Position(startLine - 1, 0)`）。列级定位需要 hunk 内偏移，随长 hunk 拆分而漂移，收益不足以支撑该复杂度——`INV-06` 只要求「文件存在且首行在范围内」。
+>
+> **密钥探测在 `core` 而非 `ui`**：`ui` 只呈现、不编排判定前置条件。若把密钥检查放在 `ui`，未配 Key 的提示会盖住「暂存区无改动」等更根本的原因（`ADR-006`）。
 
 > **跨模块解耦**：同步用 Facade 调用，异步（判定结果）用 Promise + 一次回传；禁止模块间硬编码互相引用（`dev-meta/docs/09-ai-architecture-guide.md` §3.2）。
 
@@ -105,8 +111,9 @@
 | **降级** | 判定服务侧不可用（网络 / 超时 / 非 2xx / 配额） | `Deciding` → `Degraded` → `Idle` | 一次性提示 + 放行 |
 | **丢弃单块** | 单块判定响应不合规 | 状态不变，整轮检查继续 | 无打扰（仅留痕） |
 
-- **并发模型**：单次检查内 hunk 级并发（上限 4，避免触发对端限流）；同时对同一工作区只允许一个检查在飞（重复触发直接复用进行中的 Promise，不另起流程）。异步全程不占用编辑器主线程。
-- **状态切换可观测**：关键状态切换须留痕。
+- **并发模型**：单次检查内 hunk 级并发（上限 4，避免触发对端限流）。异步全程不占用编辑器主线程。
+  - **重复触发不做去重**：每次触发都是一次独立完整的检查，不复用「进行中的 Promise」。理由有二——① 复用会让用户在第二次触发时拿到第一次的结果，而两次触发的意图可能不同（改了文件再查）；② 重复触发是显式的用户行为，`MAX_CONCURRENCY = 4` 已兜住对端限流风险，无需额外拦一道。
+- **状态切换可观测**：关键状态切换须留痕（**待 O2 埋点落地**；本版改由状态栏瞬时态 + 通知弹窗承载用户侧可见性）。
 
 ---
 
