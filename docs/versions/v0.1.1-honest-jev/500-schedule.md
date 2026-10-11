@@ -26,7 +26,7 @@
 | 5 | v0.1.1-dev-05 | dev | 开发 | **S4 Ingress Migration**：`secrets.ts`、`endpoint` 归一、`setApiKey` 命令、**并发编排与 `InspectionReport`（`items` / `degraded` / `skipped`）**、装配层换真实依赖。详见 `400-build` §3.5 | ★★★☆☆ | 2h | `GUARD-01/02/06` 全绿；`setApiKey` 三路径（写入/取消/清除）单测通过；报告三字段行为契约全绿 | ✅ |
 | 6 | v0.1.1-dev-06 | dev | 开发 | **S5 Egress Migration**：宽限两态（一次性引导 + 状态栏瞬时）、降级聚合提示、`04` §2 对齐。详见 `400-build` §3.6 | ★★★☆☆ | 1.5h | 宽限 / 降级 / 清单三路径真机可走通 | ✅ |
 | 7 | v0.1.1-dev-07 | dev | 测试 | **S6 Guards & Tests**：6 条守卫（新增 `guard:06` Key 泄漏扫描、`guard:03` 补 `500`/`150` 字面量）+ T1（≥107 例 / 12 文件）+ T2 补**上游侧并发峰值与端到端预算**断言 + 契约 lint；无运行期日志。详见 `400-build` §3.7 | ★★★☆☆ | 2h | `guard` / `test:unit` / `test:integration` / lint 全绿；两层基线只增不降 | ✅ |
-| 8 | v0.1.1-dev-08 | dev | 发布 | **S7 Verification & Close**：真机八项验收（对仿真端点）、`.vsix`、合并保留历史 + tag `v0.1.1`、Issue 收口。详见 `400-build` §3.8 | ★★☆☆☆ | 1h | `200-spec` §2 八项验收全过；tag 已推送；上架与真机校准 `[DEFERRED]` 已登记 | ⬜ |
+| 8 | v0.1.1-dev-08 | dev | 发布 | **S7 Verification & Close**：真机八项验收（对仿真端点）、`.vsix`、合并保留历史 + tag `v0.1.1`、Issue 收口。详见 `400-build` §3.8 | ★★☆☆☆ | 1h | `200-spec` §2 八项验收全过；tag 已推送；上架与真机校准 `[DEFERRED]` 已登记 | ✅ |
 
 > 状态：⬜ 待开始 / 🔄 进行中 / ✅ 已完成 / ❌ 已取消
 
@@ -98,3 +98,11 @@
 - **发现**：① **并发峰值只能从上游侧证明**——客户端无法自证「我的请求重叠了几个」，故给 mock 加 `inFlight` 峰值计数，T2 用专用实例（避免与其它用例的峰值混淆）断言 `peak ≤ 4 且 > 1`；这是「真并发 + 真 HTTP」唯一能同时被验证的层（T1 的并发断言用的是 stub，只证明引擎扇出）；② `console.` 的粗放 grep 会误报 `https://console.typesafe.ai/keys` 这个 URL 字符串——DoD 判据须用精确的 `console.log`，已在 §6 固化为该命令
 - **失误**：抽取 `handler.mjs` 的 `route()` 时（为给并发计数包一层 `try/finally`）连撞两错——① 函数声明结尾误留 `};` 触发 `SyntaxError`；② `latencyMs` 是 `createHandler` 闭包变量，提取后成为 `ReferenceError`，起服即失败、T2 整文件 12 例 skipped。两错均由「T2 全 skipped + 手动起服看 stderr」在提交前拦下
 - **遗留**：无（`GUARD-06` 已落盘并入聚合；Marketplace 上架与真实端点校准的挂账项同前）
+#### S7 Verification & Close
+
+- **概要**：真机八项验收全过（对契约仿真端点）+ 版本号 bump 0.1.1 + README 诚实化 + `.vsix` 打包（22 文件 / 33.5 KB）+ 合并保留历史 + tag `v0.1.1`（验证：`compile` 零错误 · `guard:01`~`06` 逐条 ✓ · T1 **107 例 / 12 文件** · T2 **12 例** · 契约 `03` 无 `[PLANNED]` 残留 · 验收八项全过，证据分级留痕于 `200-spec` §5.6）
+- **偏差**：S7 工时预估 1h 严重低估——**验收本身未做，但把「验收怎么做对」这件事做成了 S7 的主要产出**（详见失误与发现）；期间在 `00`/`01`/`02` 补做三份upstream 文档的一致性审计，范围超出原 Step
+- **发现**：① **判据只写「期望什么」必然踩坑**——本轮实测发现六处「照文档执行会得出错误结论」：mock 无延迟时并发峰值恒为 1（判据物理上不可成立）、`git add -A` 把工作区配置卷进夹具使 hunk 13→14、用户级 `settings.json` 压过工作区默认值使 Top-K 判据失效、降级提示有状态栏与通知**两个通道**而归因标签只在通知里、`/stats` 随进程重启归零导致取证时机错、`read -r "提示"` 在 zsh 下报错并中断整个降级循环。② **编号顺序≠执行顺序即坑源**——并发取证必须先于降级循环，否则证据被 `pkill` 永久冲掉。③ 顺带查出 01/02 与实现的三处实质漂移：T2 弃用 MSW 却无 ADR 记录（补 `ADR-008`）、`02` §2 列了不存在的 `infra/logger.ts`、§4「复用进行中的 Promise」从未实现
+- **失误**：① 文档内联循环块要求整块粘贴到 zsh，`read -r "按回车继续 → "` 因缺变量名报 `not an identifier` **中断整个循环**，后续七轮全漏跑——已改为仓库内脚本 `tools/jev-mock/preview-failures.sh`（`printf` + `read -r _`，bash/zsh 双校验）；② R5 未建目录而 R2 的 `git clean -fd` 恰好删掉 `src/utils/`，12 个夹具文件全部生成失败；③ 自身修bug 时用 `ls ... && mkdir ...` 链式写法，校验失败把后续命令全跳过却看不出异常——**与文档 §5.0 刚写下的告警是同一条教训**
+- **遗留**：① Marketplace 上架待 `VSCE_PAT`；② 真实端点校准待 Jev Key（`ADR-007` 挂账）——两项均 `[DEFERRED]`，不阻塞收口；③ `rate429`/`rate529` = 26 的 `#6` 硬证据为人工读取后报告，AI 未独立复核（`disconnect` 轮已逐字核对，T2 同场景断言全绿可交叉印证）；④ mock 的 `/health` 与 `/stats` 会被计入 `inFlight` 峰值（控制面请求污染业务指标），不影响 `≤4 且 >1` 结论，留待 O2 埋点落地后一并修
+
