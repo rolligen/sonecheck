@@ -162,6 +162,8 @@ git status --porcelain
 - 只剩 `?? .vscode/`，或完全为空 → ✅ 通过
 - 出现任何 `M ` / `A ` / `?? src/...` → ❌ 有残留，**检查 `git clean` 的路径是否写成了 `src/`**（不能写成仓库根，否则会删掉 `.vscode/`）
 
+> **副作用要知道**：`-d` 会连未被 git 跟踪的**空目录**一起删。`src/utils/` 下12 个夹具文件全是未跟踪的，整个目录会被清掉——这不是 bug，R5 的 `mkdir -p` 本就负责重建。任何依赖「目录已存在」的后续步骤，都要自己 `mkdir -p`。
+
 ---
 
 #### R3 · 写入工作区配置（三项契约默认值）
@@ -218,11 +220,14 @@ SoneCheck: 未配置 API Key，无需清除      ← 本来就没配：不弹确
 
 ```bash
 cd ~/dev/sonedemo
+mkdir -p src/auth src/utils
 printf 'export function login() {\n  if (!token) return null;\n  return true;\n}\n' > src/auth/login.ts
 for i in $(seq -w 1 12); do printf 'export function util%s(a) {\n  return a + %s;\n}\n' "$i" "$i" > "src/utils/util$i.js"; done
 git add src/
 git --no-pager diff --staged --stat | tail -1
 ```
+
+> `mkdir -p` **不可省**：R2 的 `git clean -fdq src/` 带 `-d`，会连空目录一起删。`src/utils/` 下12 个文件全未跟踪，整个目录会被清掉，R5 的重定向就会报 `no such file or directory`。这一步让 R5 不依赖 R2 的残留状态。
 
 **② 可能输出**
 
@@ -233,8 +238,12 @@ git --no-pager diff --staged --stat | tail -1
 **③ 判断标准**
 
 - **恰好 13 files changed** → ✅ 通过
+- 报 `zsh: no such file or directory: src/utils/util01.js` → ❌ `src/utils/` 不存在（被 R2 的 `git clean -fd` 删除）。补 `mkdir -p src/auth src/utils` 后重跑本步
 - 若是 14 → ❌ `.vscode/settings.json` 被卷进暂存区。原因只会是 `git add -A`——**必须写 `git add src/`**。一旦误加，`.vscode/settings.json` 还会按 `filePath` 升序排在清单**首位**（`.` 的 ASCII 码小于 `s`）
 - 若是 12 或更少 → 夹具生成中断，检查 `src/utils/` 下是否真有 12 个文件
+- 只有 1 file changed → ❌ 生成循环被前面的失败打断，重跑本步
+
+> **写 shell 块时的一个坑**：`ls <可能不存在的路径> && mkdir ...` 这种链式写法会在 `ls` 返回非零时把后续全部跳过，而 `;` 分隔的后半段却仍会执行——结果是「看起来跑过了，实际只跑了一半」。本步骤内各命令用独立行执行，不要用 `&&` 把「预期可能失败的检查」和「要执行的命令」串在一起。
 
 ---
 
