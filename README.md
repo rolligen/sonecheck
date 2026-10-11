@@ -37,9 +37,27 @@ The implementation must always:
 
 - **never block a commit** — if the decision service is unreachable, the check is
   skipped and you are told once;
-- **never upload a whole file** — only diff hunks plus bounded local context;
+- **never upload a whole file** — only diff hunks plus bounded local context, and
+  every outbound payload is capped at **2 KB** (2048 bytes) measured on the wire;
 - **never touch your workspace** — the check is strictly read-only;
 - **never nag** — an all-clear produces no popup.
+
+---
+
+## What leaves your machine
+
+Every outbound request carries exactly four things: the repository-relative file
+path, the change type, the diff hunk itself, and a bounded slice of the
+surrounding scope — the enclosing block, or a fixed line window when the block is
+not decidable. The whole payload is capped at 2 KB on the wire.
+
+There is no telemetry, no crash reporting, and no code from files you have not
+staged. Your API key is never part of a payload; it travels only in an
+`Authorization` header.
+
+The decision endpoint defaults to `https://api.typesafe.ai/v1/systemone`. You can
+point it at a self-hosted gateway with the `sonecheck.endpoint` setting, which
+accepts plain `http` only for loopback addresses.
 
 ---
 

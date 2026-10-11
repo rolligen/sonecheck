@@ -214,7 +214,7 @@
 | workspace 配置 | `sonecheck.riskThreshold` | `number` | `0.0 < v < 1.0`（**exclusive**），默认 `0.4`（S3 实测回填）；越界回退默认 | 命中即计入清单 |
 | workspace 配置 | `sonecheck.maxItems` | `number` | `1 ≤ v ≤ 20`，默认 `3` | 清单条数上限（Top-K） |
 | workspace 配置 | `sonecheck.enabled` | `boolean` | 默认 `true` | 全局开关 |
-| workspace 配置 | `sonecheck.sensitivePathPatterns` | `string[]` | 默认含 `auth` / `payment` / `migration` 等 | 供 `local_metadata.touches_sensitive_path` 使用 |
+| workspace 配置 | `sonecheck.sensitivePathPatterns` | `string[]` | 默认含 `auth` / `payment` / `migration` 等 | 敏感路径规则。**本版无生产消费方**——真实客户端按上游给定的载荷判定，不读该配置（`infra/jevClient` 的 `DecisionPolicy` 注释明载 "Unused by the real client"）；当前仅作 `v0.1.0` mock 打分维度使用。预留给 `local_metadata.touches_sensitive_path`，而该字段组自 `v0.1.0` 起尚未发送（`test/jevWire.test.ts` 有断言反证），顺延 `v0.2.0` |
 | workspace 配置 | `sonecheck.endpoint` | `string` | 须为 https URL；**http 仅允许本机回环**（`127.0.0.1` / `localhost` / `[::1]`）——供契约仿真端点与自托管网关使用，其余非 https 一律回退默认；默认官方判定端点（`ADR-007`） | 判定服务端点；测试 / 自托管网关覆盖 |
 
 - **开区间与 settings schema 的已知差异**：`riskThreshold` 的 exclusive 边界**无法**由 `package.json` 的 `contributes.configuration` 表达——JSON Schema 的 `minimum` / `maximum` 只能是闭区间，故 schema 声明 `[0, 1]`，exclusive 仅存于 `description` 文字。**该差异为已知且可接受**：exclusive 由运行期归一化保证（`core/config.ts` 判 `v <= 0 || v >= 1` 越界即回退默认）。**禁止**为对齐 schema 而放宽运行期校验。
