@@ -39,19 +39,23 @@
 |------|------|--------------------------|----------|
 | `src/extension.ts` | 激活入口，仅做装配与命令注册（依赖实现由此处注入） | `activate()` / `deactivate()` | 私有 |
 | `src/constants.ts` | 命名常量唯一集中处（判定阈值、payload 上限、构建期日志开关），纯数据无依赖 | 常量（只读） | 无逻辑 |
+| `src/core/index.ts` | **Core 层 Facade**——层间调用的唯一入口，`GUARD-02` 靠它把 `getConfiguration` 收在 `infra/configSource` | 再导出 `RiskEngine` / `InspectionReport` / 配置与阈值纯函数 | 私有 |
+| `src/infra/index.ts` | **Infra 层 Facade**——`core` / `ui` 可见的全部 infra 能力的唯一出口 | 再导出 `IJevClient` / `DecisionResult` / `HunkPayload` / `Secrets` / git 与解析能力 | 私有 |
 | `src/ui/commands.ts` | 命令编排：读取配置 → 调 core → 分发结果给展示层 | `registerCommands()` | 私有 |
 | `src/ui/riskList.ts` | QuickPick 风险清单 + 条目跳转定位 | `showRiskList()` | 私有 |
 | `src/ui/status.ts` | 状态栏与一次性提示（`idle` / `running` / `clear` / `empty` / `warning` / `no-key` 六态） | `createStatusReporter()` | 私有 |
-| `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K，并产出**检查报告**（清单 + 降级归因 + 宽限标记） | `inspect()` | 私有 |
+| `src/core/riskEngine.ts` | 主流程：切块 → 组装 payload → 并发判定 → 过滤 → Top-K，并产出**检查报告**（清单 + 降级归因 + 宽限标记） | `createRiskEngine()` / `RiskEngine`（含 `inspect()`）/ `InspectionReport` | 私有 |
 | `src/core/contextBuilder.ts` | 为每个 hunk 补上下文行，控制 payload ≤ 2KB | `buildContext()` | 私有 |
 | `src/core/threshold.ts` | 阈值判定与排序（RISK_THRESHOLD 常量，禁魔数） | `filterRisky()` | 私有 |
 | `src/core/config.ts` | 配置模型与校验：校验阈值范围、归一默认值（纯逻辑，**不接触 VS Code API**） | `normalizeConfig()` | 私有 |
 | `src/infra/configSource.ts` | 从 `workspace.getConfiguration` 读取原始 workspace 配置（唯一接触 VS Code 配置 API 的出口；**密钥不归本模块**） | `readRawConfig()` | 私有 |
-| `src/infra/git.ts` | 取工作区根、执行 `git diff --staged`（含本地失败分类：`ERR-06` / `ERR-09`） | `resolveRepoRoot()` / `readStagedDiff()` | 私有 |
+| `src/infra/git.ts` | 取工作区根、执行 `git diff --staged`（含本地失败分类：`ERR-06` 非 git 仓库 / `ERR-07` 暂存区无改动 / `ERR-09` git 不可用） | `resolveRepoRoot()` / `readStagedDiff()` | 私有 |
 | `src/infra/sourceReader.ts` | 只读读取工作区源文件行（供上下文截断；文件缺失返回空数组） | `readSourceLines()` | 私有 |
 | `src/infra/diffParser.ts` | diff 文本 → hunk 数组（文件、起始行、变更类型、内容；超长 hunk 按 payload 上限切分） | `parseDiff()` | 私有 |
-| `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `createJevClient()` / `IJevClient` / `decide()` / `buildJevRequest()` / `classifyHttpFailure()` | 私有 |
-| `src/infra/secrets.ts` | API Key 读写的**唯一出口**（VS Code SecretStorage；`INV-03`） | `hasApiKey()` / `getApiKey()` / `setApiKey()` / `clearApiKey()` | 私有 |
+| `src/infra/jevClient.ts` | Jev 决策请求（超时、重试、错误归一：上游状态码 → 契约错误码的唯一映射处） | `createJevClient()` / `IJevClient`（含 `decide()`）/ `buildJevRequest()` / `classifyHttpFailure()` | 私有 |
+| `src/infra/secrets.ts` | API Key 读写的**唯一出口**（VS Code SecretStorage；`INV-03`） | `createSecrets()` / `Secrets`（含 `hasApiKey` / `getApiKey` / `setApiKey` / `clearApiKey`）/ `SecretStoragePort` | 私有 |
+
+> **本表列主导出，非完整 API 清单**：模块内还有为可测性而导出的纯函数与工具（如 `describeDegraded()`、`runSetApiKey()`、`REASON_LABELS`、`serializePayload()` / `truncateToWireBytes()` / `wireBytes()` 这组 `INV-02` 测量工具、`LocalFailure` 类型），它们服务于单测与边界测量，不构成层间契约，故不逐个登记——但需满足两条：**可注入可测**（纯逻辑不依赖宿主 API）、**不跨层直引**（须经 Facade）。
 
 > **`infra/logger.ts` 尚未落地**：`observe()` 包装器与 Output Channel 输出属O2 结构化埋点，范围上顺延至 `v0.2.0`，故本版 `src/infra/` 下无该模块。§5 的观测要求在埋点落地前，只能由 T2 的上游侧计数（重试次数、并发峰值）与真机验收的 `/stats` 取证部分覆盖。
 

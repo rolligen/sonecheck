@@ -16,6 +16,7 @@
 | 第三方服务 | Jev Decision API（TypeSafe AI） | `POST https://api.typesafe.ai/v1/systemone`；`model: "jev-1.13.0"`（**固定版本 ID**，不用浮动别名；官方文档 `https://docs.typesafe.ai/api`，全文参考快照见 `docs/reference/jev-api.md`） | System-1 结构化判定（`noul` / `choice` / `score` 三原语），输出免费、延迟量级为亚秒级；是本产品的成本与速度前提，实际延迟须经 M1 实测回填 |
 | 构建 / 打包 | `@vscode/vsce` → `.vsix` | `^4.0` | 官方打包链，支持 GitHub Release 与 Marketplace 双通道 |
 | 测试框架 | Vitest（T1 / T2）+ 契约仿真端点（T2 发真 HTTP）；T3 走真机人工 | `vitest ^5.0` | 纯 Node 场景零配置跑 TS；T2 对**契约仿真端点发真 HTTP**而非 HTTP 层拦截，使传输层故障（真断连）与上游侧观测量（重试次数、并发峰值）真实可得，且与真机验收共用同一份端点实现。决策见 [`adrs/adr-003.md`](adrs/adr-003.md)（框架与 T1 Mock 分层）、[`adrs/adr-008.md`](adrs/adr-008.md)（T2 弃用 MSW 改真 HTTP） |
+| 脚本执行 | `tsx` | `^4.23` | 直接跑 TypeScript 校准工具（`harness/calibrate.ts`），免去为一次性脚本引入构建步骤；仅开发期使用 |
 
 > 架构级技术选型须经 `dm-adr` 记录决策（ADR），本文只登记结论与指向。
 
@@ -82,7 +83,7 @@
 
 | 引用对象 | 方向 | 用途 |
 |----------|------|------|
-| `00_PRODUCT_REQUIREMENTS.md` | upstream | 业务意图来源（§2 平台 / 资源 / 依赖 / 网络 / 隐私约束） |
+| `00_PRODUCT_REQUIREMENTS.md` | upstream | 业务意图来源（§3 平台 / 资源 / 依赖 / 网络 / 隐私约束；§5 非目标） |
 | `dev-meta/docs/06-contract-based-dev.md` §10 | 外部权威 | 测试职责分层（只引用） |
 | `docs/adrs/adr-001.md` | 关联 | 语言 / 运行时与工程布局（§1） |
 | `docs/adrs/adr-002.md` | 关联 | 判定器接口隔离与 T1 依赖注入（§3） |
