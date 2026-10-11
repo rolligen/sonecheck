@@ -16,7 +16,7 @@
 | INV-01 | `[CURRENT]` | 检查流程不得阻断、取消或延迟用户的提交动作；检查的全部失败都必须以「放行」收尾 | `core/riskEngine` | 内部 | 本文 §1 + `00` §3 可用性 | 单测：`test/riskEngine.test.ts`（本地失败以 `ERR-*` 分类失败抛出、成功路径恒返回 `RiskItem[]`）；`ui/commands.ts` 的 `catch` 不重抛 |
 | INV-02 | `[CURRENT]` | 任何离开本机的 payload 只含 diff hunk 与该 hunk 的限长上下文（**单块 payload ≤ 2KB = 2048 字节，含 `context_code`**），**不得包含完整源文件** | `core/contextBuilder` | 出站 | 本文 §2.1 Request | 单测：`test/contextBuilder.test.ts` 断言 payload 序列化总长 ≤ 2048；`test/diffParser.test.ts` 断言切分后单块不越界 |
 | INV-03 | `[CURRENT]` | Jev API Key 不得以明文出现在工作区文件、日志、遥测、错误信息或 UI 文本中 | `infra/secrets` | 内部 | 本文 §3 | `grep -rn "jevApiKey" src/ \| grep -v "infra/secrets.ts"` 须无输出（当前：仅 `infra/secrets.ts:38`）；单测：`test/secrets.test.ts` 断言明文只经 `getApiKey` 单向流出、`test/setApiKey.test.ts` 断言任何分支不进通知文案 |
-| INV-04 | `[CURRENT]` | Jev 不可用（网络失败 / 超时 / 配额耗尽 / 非 2xx）时必须降级为「静默放行 + 一次性提示」，不得向上抛错终止流程 | `infra/jevClient` | 内部 | 本文 §4 `ERR-01`–`ERR-04` | T2 契约测试（`test/integration/jevContract.test.ts`）：对契约仿真端点注入 `disconnect` / `timeout` / `http500` / `401` / `403` / `429` / `529` / `badschema` → 断言 resolve 且 `failure` 归类正确、**无一抛异常**、重试次数符合策略 |
+| INV-04 | `[CURRENT]` | Jev 不可用（网络失败 / 超时 / 配额耗尽 / 非 2xx）时必须降级为「静默放行 + 一次性提示」，不得向上抛错终止流程 | `infra/jevClient` | 内部 | 本文 §4 `ERR-01`~`ERR-05` | T2 契约测试（`test/integration/jevContract.test.ts`）：对契约仿真端点注入 `disconnect` / `timeout` / `http500` / `401` / `403` / `429` / `529` / `badschema` → 断言 resolve 且 `failure` 归类正确、**无一抛异常**、重试次数符合策略 |
 | INV-05 | `[CURRENT]` | 检查过程对工作区严格只读：不得修改、暂存、格式化或删除任何文件 | `infra/git` | 内部 | `02` §3 边界说明 | 单测：`test/git.test.ts` 断言调用前后 `git status --porcelain` 完全一致；`grep`：`src/infra/git.ts` 只出现 `diff` / `rev-parse` 子命令 |
 | INV-06 | `[CURRENT]` | 清单中每一项必须可定位到真实存在的文件与行号（禁止展示无法跳转的条目） | `ui/riskList` | 内部 | 本文 §2.2 | 单测：`test/threshold.test.ts`（不可定位即剔除）与 `test/riskEngine.test.ts`（清单项的 `filePath` / `startLine` 可在真实文件中解析） |
 | INV-07 | `[CURRENT]` | 风险阈值等判定参数必须来自命名常量或配置，禁止在判定逻辑中硬编码字面量 | `core/threshold` | 内部 | `02` §2 `core/threshold`（`RISK_THRESHOLD` 命名常量） | `grep -rnE "\b0\.4\b\|\b2048\b" src/ \| grep -v "constants.ts"` 须无输出 |
@@ -55,6 +55,7 @@
 - **Header**：`Content-Type: application/json`
 - **归属 / 调用方**：`infra/jevClient` / 由 `core/riskEngine` 调用
 - **幂等性**：幂等（同一 `state` + `questions` 重复提交返回语义等价判定）
+- **并发**：单次检查内 hunk 级并发判定，上限 **4**（`MAX_CONCURRENCY` 命名常量，`core/riskEngine` 调度）——约束对端限流风险，故不与重试策略叠加；数值可调、不作为不可变式，故不另立契约编号（展开见 `02` §4）。**可执行验证**：单测 `test/riskEngine.test.ts › 并发`「在飞请求数不超过 4，且总耗时按波数收敛」
 - **超时**：单请求超时上限 **500ms**（定案依据 2026-10-06 真实端点实测：会话内**首请求 429ms**（冷 TLS + 服务端预热）、稳态 152–213ms；原定 400ms 会在冷启动误触发 `ERR-02`；500ms 等于 `00` §3 单块判定预算上限，不破层级）；超时视为 `ERR-02` 走降级，**不重试**。**S3 复核（2026-10-06，36 次真实调用）**：单请求 p50 169–238ms、p90 240–399ms、观测最大 426ms，**0 次误触发**；余量约 15%–37%，属**薄余量**——公网长尾抖动可能偶发 `ERR-02`，该块按 `INV-04` 放行，不影响其他块
 - **版本兼容性**：请求侧**固定版本 ID** `model: "jev-1.13.0"`，**不使用 `jev-latest` / `jev-preview` 浮动别名**——上游明确建议需要结果可复现时固定 ID（别名会随新版本自动迁移，客户端不改而回答会变）；且本项目的 `riskThreshold` 系按分布校准，模型漂移会直接使校准失效。响应体 `model` 字段返回**实际执行的版本**，须随判定结果留痕以便追溯口径变化。**升级路径为主动动作**：先在 S3 / 目标版本用真实端点复核新版本表现（含阈值重校准），确认后再改本字段与 `constants.ts`
 - **上游规范**：TypeSafe 官方 API reference（`https://docs.typesafe.ai/api`）为唯一权威；本节只登记**本项目使用的子集**，不重定义上游语义。**全文参考快照**（端点 / 三型 question / 响应 / 错误码全集 / 模型版本 / `confidence` 公式 / 实测校准）见 `docs/reference/jev-api.md`——只读参考，非我方契约
@@ -140,7 +141,7 @@
 - **Path**：VS Code 命令 ID `sonecheck.inspectDiff`
 - **Method**：命令调用（无参）
 - **归属 / 调用方**：`ui/commands` / 由用户经命令面板、快捷键或状态栏触发
-- **幂等性**：幂等；检查进行中重复触发复用进行中的 Promise，不另起流程（`02` §4）
+- **幂等性**：幂等；**重复触发不做去重**——每次触发都是一次独立完整的检查，不复用「进行中的 Promise」（`02` §4）
 - **返回语义**：无返回值；结果经 UI 呈现。**失败一律以放行收尾**（INV-01）
 
 **Request**：无参（配置经 `workspace.getConfiguration("sonecheck")` 读取，见 §3 `CFG-01`）
@@ -210,12 +211,13 @@
 | 实体 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|------|
 | VS Code SecretStorage | `sonecheck.jevApiKey` | `string` | 仅存于 OS 级密钥库；禁止落盘明文 | 违反即 INV-03（**`v0.1.1`**） |
-| workspace 配置 | `sonecheck.riskThreshold` | `number` | `0.0 < v < 1.0`，默认 `0.4`（S3 实测回填） | 命中即计入清单 |
+| workspace 配置 | `sonecheck.riskThreshold` | `number` | `0.0 < v < 1.0`（**exclusive**），默认 `0.4`（S3 实测回填）；越界回退默认 | 命中即计入清单 |
 | workspace 配置 | `sonecheck.maxItems` | `number` | `1 ≤ v ≤ 20`，默认 `3` | 清单条数上限（Top-K） |
 | workspace 配置 | `sonecheck.enabled` | `boolean` | 默认 `true` | 全局开关 |
 | workspace 配置 | `sonecheck.sensitivePathPatterns` | `string[]` | 默认含 `auth` / `payment` / `migration` 等 | 供 `local_metadata.touches_sensitive_path` 使用 |
 | workspace 配置 | `sonecheck.endpoint` | `string` | 须为 https URL；**http 仅允许本机回环**（`127.0.0.1` / `localhost` / `[::1]`）——供契约仿真端点与自托管网关使用，其余非 https 一律回退默认；默认官方判定端点（`ADR-007`） | 判定服务端点；测试 / 自托管网关覆盖 |
 
+- **开区间与 settings schema 的已知差异**：`riskThreshold` 的 exclusive 边界**无法**由 `package.json` 的 `contributes.configuration` 表达——JSON Schema 的 `minimum` / `maximum` 只能是闭区间，故 schema 声明 `[0, 1]`，exclusive 仅存于 `description` 文字。**该差异为已知且可接受**：exclusive 由运行期归一化保证（`core/config.ts` 判 `v <= 0 || v >= 1` 越界即回退默认）。**禁止**为对齐 schema 而放宽运行期校验。
 - **迁移策略**：配置项只做**纯增量追加**；重命名或语义变更必须走 `dm-adr` 并提供默认值回退，禁止静默变更含义。
 
 ---
@@ -231,7 +233,7 @@
 | `ERR-05` | `[CURRENT]` | 请求不合规（`400` / `422`）或响应 schema 不合规 | ERROR | 丢弃该块，写入日志，不进入清单 | `v0.1.1` | T1 + T2：请求侧未知 `type` → `400`、`choice` 缺 `criteria` → `422`（经 `/stats.lastRequest` 断言实发请求体）；响应侧缺字段 / 越界 / 枚举外取值各一例 → 断言该块被丢弃、其余块保留 |
 | `ERR-06` | `[CURRENT]` | 非 git 仓库 | WARN | 提示一次并终止 | `v0.1.0` | 单测：`test/git.test.ts` 断言非仓库目录抛出分类失败 `ERR-06` |
 | `ERR-07` | `[CURRENT]` | 暂存区无改动 | INFO | 提示一次「无暂存改动」 | `v0.1.0` | 单测：`test/riskEngine.test.ts` 断言空 diff 抛出分类失败 `ERR-07` |
-| `ERR-08` | `[CURRENT]` | API Key 未配置（`API-02` 前置校验；宽限跳过语义，`ADR-006`） | WARN | 首次：一次性引导（带「设置 Key」按钮直达 `sonecheck.setApiKey`）；检查静默跳过（视为放行）；后续仅状态栏短暂提示 | `v0.1.1` | 单测（`test/riskEngine.test.ts`）：可读性为 `false` → 返回 `skipped: 'NO_KEY'`、**零请求零判定、不抛异常**，且优先于 `ERR-07`；`grep console.log src/` 无输出保证状态非错误。**一次性引导与「未配置 Key」状态栏瞬时态待 S5 落地** |
+| `ERR-08` | `[CURRENT]` | API Key 未配置（`API-02` 前置校验；宽限跳过语义，`ADR-006`） | WARN | 首次：一次性引导（带「设置 Key」按钮直达 `sonecheck.setApiKey`）；检查静默跳过（视为放行）；后续仅状态栏短暂提示 | `v0.1.1` | 单测（`test/riskEngine.test.ts`）：可读性为 `false` → 返回 `skipped: 'NO_KEY'`、**零请求零判定、不抛异常**，且优先于 `ERR-07`；`grep console.log src/` 无输出保证状态非错误。一次性引导（`ui/commands` 内存标记，每会话至多一次）与「未配置 Key」状态栏瞬时态（`ui/status` 的 `no-key` 态，**无错误色**——宽限非故障）均已落地 |
 | `ERR-09` | `[CURRENT]` | git 可执行文件缺失 | ERROR | 提示一次并终止 | `v0.1.0` | 单测：`test/git.test.ts` / `src/infra/git.ts` 的 `ENOENT` 分类分支（真机不可复现，以代码分支 + 分类断言为准） |
 | `ERR-10` | `[CURRENT]` | 用户取消输入（`API-03`） | INFO | 忽略，保持原值 | `v0.1.1` | 单测（`test/setApiKey.test.ts`）：`promptInput` 解析为 `undefined` → 断言零写入、零清除、零提示（`API-03` 流程已抽为可注入纯函数，故不必真机复现） |
 | `ERR-11` | `[CURRENT]` | 输入为空串（清除 Key，`API-03`） | WARN | 二次确认后清除 | `v0.1.1` | 单测（`test/setApiKey.test.ts`）：确认为 `false` → 保留原值且不写入；确认为 `true` → 清除并提示；未配置 Key 时空串不弹确认 |
@@ -245,7 +247,7 @@
 
 - **破坏性变更**（改语义 / 签名 / 坐标口径）：须走 `dm-adr` 记录并同步调用方，**不得静默修改**。
 - **纯增量追加**：标注「纯增量」并回写编号至本表（如 §2.4 新增 `reason_code` 取值）。
-- **状态翻牌**：`[PLANNED]` → `[CURRENT]` **须以可执行证据为前提，分两批进行**——S3 翻有实测 / 单测 / 守卫依据者（本版为 `INV-02` / `INV-07` / `API-01`（签名与本地派生）/ `CFG-01`），其余兑现项（`INV-01` / `INV-05` / `INV-06` / `API-02` / `ERR-06` / `ERR-07` / `ERR-09`）随 S6 守卫与单测全绿后翻牌；被取代 / 废弃 → 标 `[HISTORY]` 并迁归档，索引保留一行 + 归档指针，**不删除**（`dev-meta/docs/06` §4.2 / §6.5）。
+- **状态翻牌**：`[PLANNED]` → `[CURRENT]` **须以可执行证据为前提**。`v0.1.0` 分两批执行——S3 翻有实测 / 单测 / 守卫依据者（`INV-02` / `INV-07` / `API-01`（签名与本地派生）/ `CFG-01`），其余兑现项（`INV-01` / `INV-05` / `INV-06` / `API-02` / `ERR-06` / `ERR-07` / `ERR-09`）随 S6 守卫与单测全绿后翻牌；`v0.1.1` 的 `INV-04` / `API-03` / `ERR-01`~`ERR-05` / `ERR-08` / `ERR-10` / `ERR-11` 随 T2 契约测试与单测全绿翻牌。**至此本文 22 条契约全部为 `[CURRENT]`，无 `[PLANNED]` 残留**；后续新增契约仍适用本规则。被取代 / 废弃 → 标 `[HISTORY]` 并迁归档，索引保留一行 + 归档指针，**不删除**（`dev-meta/docs/06` §4.2 / §6.5）。
 - **引用单向**：本文**只被引用，不引用下游**（版本文档 / 计划 / 上层规格）；消费方在**自己文档内**声明引用（`dev-meta/docs/06` §7.1）。
 - **只读纪律**：AI 严禁自行改写契约本身；改实现前先 diff 契约（见 `dev-meta/docs/06` §8 与 `dm-contract-gate`）。
 
@@ -272,7 +274,7 @@
 | 判据 | 当前值 | 状态 |
 |------|--------|------|
 | 契约条数 ≤ 30 | 22 条 | ✅ 未超 |
-| 文件行数 ≤ 300 | 367 行（2026-10-06 复核） | ⚠️ **超限** |
+| 文件行数 ≤ 300 | 369 行（2026-10-11 复核） | ⚠️ **超限** |
 
 - **本轮决定**：**登记豁免、暂不拆分**。理由：拆分须先冻结编号集合，再脚本批量改全仓引用并跑结构 lint（`dev-meta/docs/06` §6.8），属独立议题；与语义修订混做会放大引用断裂风险。
 - **语义锚点同步延后**：契约条目注入锚点属拆分迁移序列中的一步（§7.3），随拆分一并执行；当前仅 §1 保留 `INV-02` 的形态示范。

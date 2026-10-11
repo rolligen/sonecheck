@@ -42,12 +42,12 @@
 
 | 视图 | 空 | 加载 | 成功 | 错误 | 降级 |
 |------|----|------|------|------|------|
-| 状态栏（`ui/status`） | 无暂存改动：显示 `SoneCheck: 无改动` 后恢复 | 显示 `SoneCheck: 检查中…`（spinner） | 显示 `All Clear` 2s 后恢复 | `ERR-06/09`：显示一次错误并恢复 | `ERR-01~05`：显示 `SoneCheck: 已跳过` 2s 后恢复；未配置 Key（`ERR-08`）：显示 `SoneCheck: 未配置 Key` 2s 后恢复（**无错误色**——宽限非故障） |
+| 状态栏（`ui/status`） | 无暂存改动：显示 `SoneCheck: 无改动` 后恢复 | 显示 `SoneCheck: 检查中…`（**纯文案，无 spinner**） | 显示 `SoneCheck: All Clear` 2s 后恢复 | `ERR-06/09`：显示一次错误并恢复 | `ERR-01~05`：显示 `SoneCheck: 已跳过` 2s 后恢复；未配置 Key（`ERR-08`）：显示 `SoneCheck: 未配置 Key` 2s 后恢复（**无错误色**——宽限非故障） |
 | QuickPick 清单（`ui/riskList`） | **不弹出**（零打扰，US-03） | 不适用（清单仅在判定完成后弹出） | 列出 Top-K 风险项，可键盘选择 | `ERR-05`：不合规项被丢弃，剩余项照常展示 | 同「空」：全部块失败时不弹清单 |
 | 一次性引导通知（`ui/commands`） | 不适用 | 不适用 | 不适用 | 不适用 | 未配置 Key 的**首次**：`SoneCheck 需要 Jev API Key 才能判定改动风险` +「设置 Key」按钮（直达 `sonecheck.setApiKey`）；**每会话至多一次**（内存标记，不持久化） |
 | 降级聚合提示（`ui/commands`） | 不适用 | 不适用 | 不适用 | 不适用 | `SoneCheck: 已跳过 N 块改动（<归因>）`。归因标签：`ERR-01` 网络不可达 · `ERR-02` 服务超时 · `ERR-03` 服务异常 · `ERR-04` Key 或配额不可用 · `ERR-05` 响应不合规。**有效结果优先**：有清单时先弹清单、关闭后再提示 |
 | 密钥输入框（`ui/commands`） | `ERR-10` 取消：无操作 | 不适用 | 写入成功并提示「已保存」 | `ERR-11` 空串：二次确认后清除 | 不适用 |
-| 输出通道（`ui/logger` → Output Channel） | 无日志时保持空白 | 实时追加 | 结构化日志可读 | 记录 `ERR-*` 原因码 | 记录降级原因与耗时 |
+| 输出通道（`ui/logger` → Output Channel）｜**本版未落地**，`v0.2.0` O2 埋点后启用 | 无日志时保持空白 | 实时追加 | 结构化日志可读 | 记录 `ERR-*` 原因码 | 记录降级原因与耗时 |
 
 > 错误与降级态须有可观测留痕，判据见 `06_OBSERVABILITY.md`；输出通道随 O2 埋点在 `v0.2.0` 落地（`06` §6），本版无运行期日志。
 >
@@ -65,7 +65,7 @@
 | 层 | 本项目取值 / 来源 |
 |----|-------------------|
 | **Primitive** 基础层 | 不适用（由 VS Code 主题提供） |
-| **Semantic** 语义层 | 映射到原生控件语义：`StatusBarItem.warningBackground` / `errorBackground`；QuickPick 使用主题默认前景背景 |
+| **Semantic** 语义层 | 映射到原生控件语义：`StatusBarItem.warningBackground`（`ThemeColor('statusBarItem.warningBackground')`，**降级态唯一着色**）；错误态与空闲态不着色（`backgroundColor` 置 `undefined`，未使用 `errorBackground`）；QuickPick 使用主题默认前景背景 |
 | **Component** 组件层 | 不适用（无自绘组件） |
 
 - **令牌文件（SSOT 载体）**：**本项目无**——界面全部使用 VS Code 原生控件，不存在自绘视觉层，故不引入 `tokens.json`。若后续引入 Webview，须按 `dev-meta/docs/09-ai-architecture-guide.md` §7 补三层令牌。
@@ -76,12 +76,12 @@
 
 | 组件 | 用途 | 入参 | 状态 | 复用范围 |
 |------|------|------|------|----------|
-| `createStatusBarItem` | 检查进度与结果的短提示 | 文案、`ThemeColor` 语义 | 空闲 / 进行中 / All Clear / 降级 | 全局单例 |
+| `createStatusBarItem` | 检查进度与结果的短提示 | 文案、`ThemeColor` 语义 | **6 态**：空闲 / 进行中 / All Clear / 无改动 / 降级 / 未配置 Key | 全局单例 |
 | `window.showQuickPick` | 风险条目清单与选择 | `RiskItem[]`、占位文案 | 有项 / 空（不弹出） | 单次检查 |
-| `window.showInformationMessage` | 一次性提示（无改动 / 降级） | 文案、可选按钮 | 一次性 | 全局 |
+| `window.showInformationMessage` | 一次性提示（无暂存改动等**信息级**文案） | 文案、可选按钮 | 一次性 | 全局 |
 | `window.showInputBox` | API Key 录入 | `password: true` | 正常 / 取消 / 空串 | 一次性 |
-| `window.showWarningMessage` | 降级 / 清除 Key 二次确认 | 文案、确认按钮 | 一次性 | 全局 |
-| `window.showTextDocument` + `revealRange` | 条目跳转定位 | `Uri`、行列 | 成功 / 失败 | 单次选择 |
+| `window.showWarningMessage` | **降级**提示 / 清除 Key 二次确认 | 文案、确认按钮 | 一次性 | 全局 |
+| `window.showTextDocument` + `revealRange` | 条目跳转定位 | `Uri`、**行**（`Position(startLine - 1, 0)`，列固定 `0`——按 hunk 起始行定位，不定位到列） | 成功 / 失败 | 单次选择 |
 
 ### 3.3 可访问性与动效下限
 
@@ -92,7 +92,7 @@
 | 对比度 | 正文 / 大字达 WCAG 2.2 AA | 由 VS Code 主题保证；不自绘文本 |
 | 动态字号 | 支持系统字号缩放，不截断 | 由原生控件保证；条目文案保持单行短句 |
 | 无障碍标签 | 交互元素有可读标签 / 语义角色 | QuickPick 项 `label` + `description` 语义清晰；状态栏 `name` 已设置 |
-| 动效降级 | 尊重 `prefers-reduced-motion` | 无自定义动效；仅原生 spinner |
+| 动效降级 | 尊重 `prefers-reduced-motion` | 无自定义动效；状态栏「检查中」亦无 spinner（纯文案切换），全程无常驻动画 |
 | 键盘可达 | 全流程可纯键盘完成 | 命令面板 / QuickPick 原生支持方向键与 `Esc` |
 
 ---
@@ -104,7 +104,7 @@
 | 风险清单条目 | `03` §2.1 Response（`score` / `reason_code`） | `ERR-05`：丢弃该条，不出现在清单 |
 | 清单跳转定位 | `03` §1 `INV-06` | 定位失败不得展示该条（禁止死链） |
 | API Key 输入框 | `03` §2.3（`API-03`）、§3（`CFG-01`） | `ERR-10` 取消 / `ERR-11` 空串二次确认 |
-| 降级提示 | `03` §4 `ERR-01`–`ERR-04` + `INV-04` | 静默放行 + 一次性提示，绝不阻断提交 |
+| 降级提示 | `03` §4 `ERR-01`~`ERR-05` + `INV-04` | 静默放行 + 一次性提示，绝不阻断提交 |
 | 状态栏「无改动」 | `03` §4 `ERR-07` | 提示一次后恢复 |
 
 ---
