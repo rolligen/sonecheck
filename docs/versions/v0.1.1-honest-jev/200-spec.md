@@ -85,17 +85,26 @@
 
 ### 5.1 验收环境准备
 
+> ⚠️ **执行方式：逐行敲，或先删净所有 `#` 行再整块粘贴。**
+> `#` 开头是**写给人看的注释**，不是命令。整块粘贴进 zsh 时它们会被逐行执行，报 `command not found: #`。该报错**无害**（zsh 不会因单行失败中止），但会**掩盖真实失败**，也容易让人误以为前面的步骤没跑。
+>
+> 与 §5.3 的循环块不同——那段是 `for` 循环，**必须整块执行**，否则只跑一半。
+
 ```bash
 # ① 安装产物（干净 VS Code）
 code --install-extension extension/sonecheck-0.1.1.vsix
 code --list-extensions --show-versions | grep sonecheck
 #   ↑ 期望 rolligen.sonecheck@0.1.1
-#   ⚠️ 不要把「期望 …」写在本行行尾——会被 shell 连同注释词一起当参数传给 grep
+#   ⚠️ 「期望 …」不要写在命令行尾——会被 shell 连同注释词一起当参数传给 grep
 
-# ② 起契约仿真端点（无预设故障）
-PORT=8787 node tools/jev-mock/local.mjs &
+# ② 起契约仿真端点（无预设故障）——幂等，已在跑就不重复起
+curl -sf http://127.0.0.1:8787/health >/dev/null || PORT=8787 node tools/jev-mock/local.mjs &
+sleep 1
 curl -s http://127.0.0.1:8787/health
 #   ↑ 期望 ok:true、faults 八项、defaultFault:null
+#   ⚠️ 若报 EADDRINUSE：说明 mock 已在运行（多半是调试期留下的）。
+#     **不要重复启动，也不要 pkill**——旧进程若计数已污染，需重启才能归零；
+#     计数不干净时见 §5.1.2。`curl` 能通即说明旧进程在正常服务。
 
 # ③ 夹具：13 块暂存改动（1 敏感路径 + 12 低风险）
 cd ~/dev/sonedemo && git reset -q
@@ -104,18 +113,43 @@ for i in $(seq -w 1 12); do printf 'export function util%s(a) {\n  return a + %s
 git add -A && git --no-pager diff --staged --stat | tail -1
 #   ↑ 期望 13 files changed
 
-# ④ 工作区配置（否则会打到真实上游）
-#    settings.json： "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone"
+# ④ 工作区配置——必须执行，否则会打到真实 Jev 官方端点
+mkdir -p ~/dev/sonedemo/.vscode && printf '{\n  "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone"\n}\n' > ~/dev/sonedemo/.vscode/settings.json && cat ~/dev/sonedemo/.vscode/settings.json
+#   ↑ 期望 cat 出 "sonecheck.endpoint": "http://127.0.0.1:8787/v1/systemone"
+#   ⚠️ 路径 /v1/systemone 不可省——normalizeEndpoint 只做协议与主机校验，
+#      不补路径。不配则用 JEV_ENDPOINT_DEFAULT（真官方端点），改动会被真发出去，
+#      回执是「Key 或配额不可用」——完全误导。
 ```
 
 > 全部命令须在 VS Code 的 **`sonedemo` 窗口**内执行检查——扩展读的是当前窗口的工作区。
 
-### 5.1.1 开跑前的两个前置动作（顺序敏感，漏做会产生假阴性）
+### 5.1.1 开跑前的三个前置动作（顺序敏感，漏做会产生假阴性）
 
 | 动作 | 为什么必须先做 |
 |---|---|
 | `Cmd+Shift+P` → **`Developer: Reload Window`** | 验收 3 期望「首次出现引导」。引导闩锁 `createSessionGuide()` 是 `registerCommands` 内的**内存闭包，每窗口一份、只随窗口重载重置**。调试期若已跑过未配 Key 的检查，闩锁已被 claim，引导不再重现——会被误判成功能缺陷 |
 | 取工作区快照 `cd ~/dev/sonedemo && git status --porcelain > /tmp/before.txt` | 验收 8 要比对前后两次快照。中途若在编辑器里改了文件，比对必然失败，而失败原因与扩展无关 |
+| 核对 mock 计数是否干净（§5.1.2） | `/stats` 的 `total` / `inFlight.peak` 只随进程重启归零。调试期已产生请求时，验收 #6 / #7 的取证会带上无法解释的历史值 |
+
+### 5.1.2 计数归零（`/stats` 不干净时才需要）
+
+```bash
+curl -s http://127.0.0.1:8787/stats
+```
+
+期望 `total: 0`、`byFault: {}`、`inFlight.peak ≤ 1`。
+
+> `peak = 1` 通常是 `/stats` 请求**自身**贡献的——`inFlight` 在 `route` 之前自增，而 `/health` 与 `/stats` 的早返回分支在 `route` 之内，因此这两个控制面请求也被计入并发峰值（`total` 不受影响，它只在 `/v1/systemone` 分支自增）。这是 mock 的已知噪音，**不影响验收 #7 的结论**（13 块真实请求必然把峰值推到 4）。修复留待 S7 之后，不在本版范围内。
+
+不干净时才重启（重启会让 §5.3 尚未完成的取证一并失效，故只在开始前做）：
+
+```bash
+pkill -f jev-mock/local.mjs; sleep 0.5
+PORT=8787 node tools/jev-mock/local.mjs &
+sleep 1; curl -s http://127.0.0.1:8787/stats
+```
+
+> 端口在 `sleep 0.5` 后即可复用（实测）。若仍 `EADDRINUSE`，把 `sleep` 加长到 1s。
 
 ### 5.2 逐项操作与期望
 
